@@ -187,8 +187,8 @@ if [[ $NEED_SETTINGS -eq 1 ]]; then
 
     if [[ -z ${SITE_BASIC_AUTH:-} ]]; then
         [[ $INTERACTIVE -eq 1 ]] && echo
-        if yes_no "Password-protect the site (the app has no accounts yet, so this is the only thing stopping anyone with the URL from reading/deleting your recipes)?" \
-            "$([[ $(env_or SITE_BASIC_AUTH True) == True ]] && echo y || echo n)"; then
+        if yes_no "Password-protect the site (leave this off for public uploads; the app has no accounts yet)?" \
+            "$([[ $(env_or SITE_BASIC_AUTH False) == True ]] && echo y || echo n)"; then
             SITE_BASIC_AUTH=True
         else
             SITE_BASIC_AUTH=False
@@ -377,7 +377,7 @@ else
 fi
 chown "$APP_USER:$APP_USER" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
-SITE_BASIC_AUTH="$(env_or SITE_BASIC_AUTH True)"
+SITE_BASIC_AUTH="$(env_or SITE_BASIC_AUTH False)"
 if [[ $SITE_BASIC_AUTH == True ]]; then
     [[ -s $HTPASSWD ]] || die "$HTPASSWD is missing. Run with --reconfigure to set a site password (or SITE_BASIC_AUTH=False to turn the password off)."
     chown "root:$WEB_USER" "$HTPASSWD"
