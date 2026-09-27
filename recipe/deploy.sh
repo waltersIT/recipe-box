@@ -17,8 +17,11 @@
 #
 #   rsync -az --delete --exclude .venv --exclude node_modules --exclude dist \
 #     --exclude db.sqlite3 --exclude media --exclude .env \
-#     ~/Desktop/recipe/ ec2-user@<instance>:recipe/
+#     ~/Desktop/recipe-box/recipe/ ec2-user@<instance>:recipe/
 #   ssh -t ec2-user@<instance> 'sudo ~/recipe/deploy.sh'
+#
+# To test the database connection first (IAM role, security groups, rds_iam),
+# run check-db.sh on the instance: sudo ~/recipe/check-db.sh <rds-endpoint>
 #
 # (Ubuntu AMIs log in as `ubuntu` instead of `ec2-user`. Keep the -t: the first
 # run asks a few questions.)
@@ -726,7 +729,7 @@ fi
 [[ -z $DOMAIN ]] && note "Without a domain, give the instance an Elastic IP so its address survives a stop/start."
 cat <<EOF
 
-    Redeploy:   copy the folder up again, then  sudo ~/recipe/deploy.sh
+    Redeploy:   sudo $APP_ROOT/deploy.sh  (git checkout: cd $APP_ROOT && git pull first)
     Logs:       journalctl -u $SERVICE -f
                 sudo tail -f /var/log/nginx/$APP_NAME.error.log
     Settings:   sudo $APP_ROOT/deploy.sh --reconfigure

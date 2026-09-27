@@ -102,8 +102,16 @@ frontend/src/
 From your Mac, copy the folder up and run the script on the instance (Ubuntu AMIs use `ubuntu@` instead of `ec2-user@`):
 
 ```bash
-rsync -az --delete --exclude .venv --exclude node_modules --exclude dist --exclude db.sqlite3 --exclude media --exclude .env ~/Desktop/recipe/ ec2-user@<instance>:recipe/
+rsync -az --delete --exclude .venv --exclude node_modules --exclude dist --exclude db.sqlite3 --exclude media --exclude .env ~/Desktop/recipe-box/recipe/ ec2-user@<instance>:recipe/
 ```
+
+To check the database connection before deploying (the instance's IAM role, security groups, the `rds_iam` grant, and whether the database exists), run the preflight on the instance:
+
+```bash
+ssh -t ec2-user@<instance> 'sudo ~/recipe/check-db.sh <rds-endpoint>'
+```
+
+Then deploy:
 
 ```bash
 ssh -t ec2-user@<instance> 'sudo ~/recipe/deploy.sh'
