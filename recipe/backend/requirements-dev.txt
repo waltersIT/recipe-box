@@ -1,0 +1,3 @@
+-r requirements.txt
+# Used by the test suite to generate sample PDFs.
+reportlab>=4.0

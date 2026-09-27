@@ -1,0 +1,16 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Local data (your recipe database, photos and imported files)
+backend/db.sqlite3
+backend/media/
+backend/staticfiles/
+backend/.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+.DS_Store

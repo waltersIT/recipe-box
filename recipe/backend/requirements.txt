@@ -1,0 +1,18 @@
+Django>=5.2,<6.1
+djangorestframework>=3.16
+python-dotenv>=1.0
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.0
+recipe-scrapers>=15.0
+pypdfium2>=4.30
+Pillow>=11.0
+pillow-heif>=0.20
+anthropic>=1.0
+# Production: gunicorn behind nginx, PostgreSQL on RDS (IAM auth signs tokens with boto3).
+gunicorn>=23.0
+psycopg[binary]>=3.2
+boto3>=1.35
+# On-device OCR via Apple's Vision framework (macOS only). Elsewhere, install
+# the `tesseract` binary or configure Claude for screenshots/scanned PDFs.
+ocrmac>=1.0; sys_platform == "darwin"
