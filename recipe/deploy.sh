@@ -185,16 +185,26 @@ if [[ $NEED_SETTINGS -eq 1 ]]; then
         fi
     fi
 
-    [[ $INTERACTIVE -eq 1 ]] && printf '\n  %s\n' "The site is protected by a username and password (the app has no accounts yet)."
-    current_user="$(awk -F: 'NR==1 {print $1}' "$HTPASSWD" 2>/dev/null || true)"
-    ask SITE_USER "Site username" "${current_user:-recipes}"
-    if [[ -s $HTPASSWD && $SITE_USER == "$current_user" ]]; then
-        ask SITE_PASSWORD "Site password (blank: keep the current one)" "" secret
-    else
-        ask SITE_PASSWORD "Site password (blank: generate one)" "" secret
-        if [[ -z $SITE_PASSWORD ]]; then
-            SITE_PASSWORD="$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-16)"
-            GENERATED_PASSWORD="$SITE_PASSWORD"
+    if [[ -z ${SITE_BASIC_AUTH:-} ]]; then
+        [[ $INTERACTIVE -eq 1 ]] && echo
+        if yes_no "Password-protect the site (the app has no accounts yet, so this is the only thing stopping anyone with the URL from reading/deleting your recipes)?" \
+            "$([[ $(env_or SITE_BASIC_AUTH True) == True ]] && echo y || echo n)"; then
+            SITE_BASIC_AUTH=True
+        else
+            SITE_BASIC_AUTH=False
+        fi
+    fi
+    if [[ $SITE_BASIC_AUTH == True ]]; then
+        current_user="$(awk -F: 'NR==1 {print $1}' "$HTPASSWD" 2>/dev/null || true)"
+        ask SITE_USER "Site username" "${current_user:-recipes}"
+        if [[ -s $HTPASSWD && $SITE_USER == "$current_user" ]]; then
+            ask SITE_PASSWORD "Site password (blank: keep the current one)" "" secret
+        else
+            ask SITE_PASSWORD "Site password (blank: generate one)" "" secret
+            if [[ -z $SITE_PASSWORD ]]; then
+                SITE_PASSWORD="$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-16)"
+                GENERATED_PASSWORD="$SITE_PASSWORD"
+            fi
         fi
     fi
 
@@ -354,9 +364,11 @@ if [[ $NEED_SETTINGS -eq 1 ]]; then
             echo
             [[ -n $ANTHROPIC_API_KEY ]] && echo "ANTHROPIC_API_KEY=$(dotenv_quote "$ANTHROPIC_API_KEY")"
             echo "RECIPE_LLM=auto"
+            echo
+            echo "SITE_BASIC_AUTH=$SITE_BASIC_AUTH"
         } >"$ENV_FILE"
     )
-    if [[ -n $SITE_PASSWORD ]]; then
+    if [[ $SITE_BASIC_AUTH == True && -n ${SITE_PASSWORD:-} ]]; then
         printf '%s:%s\n' "$SITE_USER" "$(printf '%s' "$SITE_PASSWORD" | openssl passwd -apr1 -stdin)" >"$HTPASSWD"
     fi
     note "saved to $ENV_FILE"
@@ -365,9 +377,12 @@ else
 fi
 chown "$APP_USER:$APP_USER" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
-[[ -s $HTPASSWD ]] || die "$HTPASSWD is missing. Run with --reconfigure to set a site password."
-chown "root:$WEB_USER" "$HTPASSWD"
-chmod 640 "$HTPASSWD"
+SITE_BASIC_AUTH="$(env_or SITE_BASIC_AUTH True)"
+if [[ $SITE_BASIC_AUTH == True ]]; then
+    [[ -s $HTPASSWD ]] || die "$HTPASSWD is missing. Run with --reconfigure to set a site password (or SITE_BASIC_AUTH=False to turn the password off)."
+    chown "root:$WEB_USER" "$HTPASSWD"
+    chmod 640 "$HTPASSWD"
+fi
 
 DOMAIN="$(env_get SITE_DOMAIN)"
 DB_HOST="$(env_get DB_HOST)"
@@ -520,9 +535,15 @@ site_body() {
     gzip_types text/plain text/css application/javascript application/json image/svg+xml;
     access_log /var/log/nginx/$APP_NAME.access.log;
     error_log /var/log/nginx/$APP_NAME.error.log;
+EOF
+    if [[ $SITE_BASIC_AUTH == True ]]; then
+        cat <<EOF
 
     auth_basic "Recipe Box";
     auth_basic_user_file $HTPASSWD;
+EOF
+    fi
+    cat <<EOF
 
     location = /healthz {
         auth_basic off;
@@ -719,12 +740,16 @@ else
 fi
 
 printf '\n%s%sDeployed.%s  %s\n' "$bold" "$green" "$reset" "$url"
-echo "    Sign in as: $(awk -F: 'NR==1 {print $1}' "$HTPASSWD")"
-if [[ -n $GENERATED_PASSWORD ]]; then
-    printf '    Password:   %s%s%s  (generated; save it now, it is not shown again)\n' "$bold" "$GENERATED_PASSWORD" "$reset"
-fi
-if [[ $url == http://* ]]; then
-    warn "the site is plain HTTP, so the password travels unencrypted. Point a domain at this instance, then run: sudo $APP_ROOT/deploy.sh --reconfigure"
+if [[ $SITE_BASIC_AUTH == True ]]; then
+    echo "    Sign in as: $(awk -F: 'NR==1 {print $1}' "$HTPASSWD")"
+    if [[ -n $GENERATED_PASSWORD ]]; then
+        printf '    Password:   %s%s%s  (generated; save it now, it is not shown again)\n' "$bold" "$GENERATED_PASSWORD" "$reset"
+    fi
+    if [[ $url == http://* ]]; then
+        warn "the site is plain HTTP, so the password travels unencrypted. Point a domain at this instance, then run: sudo $APP_ROOT/deploy.sh --reconfigure"
+    fi
+else
+    warn "no password: anyone with the URL can read, add and delete recipes. Turn it back on with: sudo $APP_ROOT/deploy.sh --reconfigure"
 fi
 [[ -z $DOMAIN ]] && note "Without a domain, give the instance an Elastic IP so its address survives a stop/start."
 cat <<EOF
