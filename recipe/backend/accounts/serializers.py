@@ -13,12 +13,16 @@ USERNAME_HELP = "Letters, numbers, and . _ - only."
 class UserBriefSerializer(serializers.ModelSerializer):
     """How a recipe's uploader is shown on cards and recipe pages."""
 
-    name = serializers.CharField(source="profile.name", read_only=True)
+    name = serializers.SerializerMethodField()
     avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ["username", "name", "avatar"]
+
+    def get_name(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.name if profile else obj.username
 
     def get_avatar(self, obj):
         profile = getattr(obj, "profile", None)
