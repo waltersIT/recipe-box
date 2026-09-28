@@ -125,22 +125,24 @@ frontend/src/
 
 [`deploy.sh`](deploy.sh) sets up an EC2 instance the same way as Filler-Local: nginx serves the React build and proxies `/api` to gunicorn (systemd), and Django uses **PostgreSQL on RDS** with IAM auth. RDS doesn't offer SQLite, so production uses Postgres; locally the app still uses SQLite unless `DB_HOST` is set.
 
-From your Mac, copy the folder up and run the script on the instance (Ubuntu AMIs use `ubuntu@` instead of `ec2-user@`):
+`deploy.sh` always deploys the latest `main` from GitHub (`waltersIT/recipe-box`): every run pulls `main`, and if `main`'s copy of `deploy.sh` differs from the one you started, it re-runs itself as `main`'s copy. Local changes aren't deployed until they're pushed. (Ubuntu AMIs use `ubuntu@` instead of `ec2-user@`.)
+
+To check the database connection before the first deploy (the instance's IAM role, security groups, the `rds_iam` grant, and whether the database exists), run the preflight on the instance:
 
 ```bash
-rsync -az --delete --exclude .venv --exclude node_modules --exclude dist --exclude db.sqlite3 --exclude media --exclude .env ~/Desktop/recipe-box/recipe/ ec2-user@<instance>:recipe/
+ssh -t ec2-user@<instance> 'curl -fsSL https://raw.githubusercontent.com/waltersIT/recipe-box/main/recipe/check-db.sh -o check-db.sh && sudo bash check-db.sh <rds-endpoint>'
 ```
 
-To check the database connection before deploying (the instance's IAM role, security groups, the `rds_iam` grant, and whether the database exists), run the preflight on the instance:
+First deploy on a new instance:
 
 ```bash
-ssh -t ec2-user@<instance> 'sudo ~/recipe/check-db.sh <rds-endpoint>'
+ssh -t ec2-user@<instance> 'curl -fsSL https://raw.githubusercontent.com/waltersIT/recipe-box/main/recipe/deploy.sh -o deploy.sh && sudo bash deploy.sh'
 ```
 
-Then deploy:
+After that, push to `main` and redeploy with:
 
 ```bash
-ssh -t ec2-user@<instance> 'sudo ~/recipe/deploy.sh'
+ssh -t ec2-user@<instance> 'sudo /srv/recipe-box/deploy.sh'
 ```
 
 The first run asks for:
@@ -150,7 +152,7 @@ The first run asks for:
 - whether to put the whole site behind one shared password (off by default)
 - an Anthropic key (optional)
 
-It then installs everything, creates the database if needed, migrates, and starts the site. If you give a domain it offers a free Let's Encrypt certificate. To redeploy, run the same two commands again. Settings, the database, and uploads are kept.
+It then installs everything, creates the database if needed, migrates, and starts the site. If you give a domain it offers a free Let's Encrypt certificate. Redeploys pull `main` again and rebuild. Settings, the database, and uploads are kept.
 
 AWS setup it expects:
 - **Instance security group:** 80 and 443 open.
@@ -166,6 +168,7 @@ Useful commands on the instance:
 - An admin account: `sudo -u recipebox /srv/recipe-box/backend/.venv/bin/python /srv/recipe-box/backend/manage.py createsuperuser`
 - Logs: `journalctl -u recipe-box -f`
 - Uploads live in `/var/lib/recipe-box/media`, outside the code directory.
+- The git checkout of `main` lives in `/srv/recipe-box-src`, and `/srv/recipe-box` is synced from its `recipe/` folder.
 
 Link fetching refuses private and link-local addresses, which includes the EC2 metadata service. If other people will import through the server, see the notes on site terms below.
 

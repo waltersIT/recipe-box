@@ -13,23 +13,30 @@
 #     └─ /api/ /admin/ → gunicorn  (unix:/run/recipe-box/gunicorn.sock)
 #                          └──────→ PostgreSQL on RDS
 #
-# DEPLOY - from your Mac, copy this folder to the instance and run it there:
+# DEPLOY - every run pulls the latest main from GitHub and deploys exactly that,
+# so push first, then run it on the instance:
 #
-#   rsync -az --delete --exclude .venv --exclude node_modules --exclude dist \
-#     --exclude db.sqlite3 --exclude media --exclude .env \
-#     ~/Desktop/recipe-box/recipe/ ec2-user@<instance>:recipe/
-#   ssh -t ec2-user@<instance> 'sudo ~/recipe/deploy.sh'
+#   ssh -t ec2-user@<instance> 'sudo /srv/recipe-box/deploy.sh'
+#
+# On a new instance (nothing there yet), fetch the script from main first:
+#
+#   ssh -t ec2-user@<instance> 'curl -fsSL https://raw.githubusercontent.com/waltersIT/recipe-box/main/recipe/deploy.sh -o deploy.sh && sudo bash deploy.sh'
+#
+# Whichever copy of this script you start, it re-runs itself as main's copy if
+# that one is different, so what's deployed is always what's on main.
 #
 # To test the database connection first (IAM role, security groups, rds_iam),
-# run check-db.sh on the instance: sudo ~/recipe/check-db.sh <rds-endpoint>
+# fetch check-db.sh the same way and run it on the instance:
+#   curl -fsSL https://raw.githubusercontent.com/waltersIT/recipe-box/main/recipe/check-db.sh -o check-db.sh
+#   sudo bash check-db.sh <rds-endpoint>
 #
 # (Ubuntu AMIs log in as `ubuntu` instead of `ec2-user`. Keep the -t: the first
 # run asks a few questions.)
 #
 # The first run asks for your settings (domain, RDS endpoint, site password,
 # optional Anthropic key), installs packages, then builds, migrates and starts
-# everything. To redeploy, run the same two commands again: the code is
-# re-synced and rebuilt, and your settings, database and uploads are kept.
+# everything. To redeploy, run the same command again: main is pulled and
+# rebuilt, and your settings, database and uploads are kept.
 #
 # Options:
 #   --reconfigure   ask for the settings again (keeps the secret key)
@@ -37,8 +44,8 @@
 #   --no-migrate    skip database migrations
 #   -h, --help      show this help
 #
-# Code can come from git instead of rsync:
-#   sudo APP_REPO=https://github.com/you/recipe.git ./deploy.sh
+# APP_REPO and APP_BRANCH override where the code comes from (default: main of
+# github.com/waltersIT/recipe-box).
 #
 # Settings can be passed as environment variables instead of answered
 # (DOMAIN, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_IAM_AUTH, DB_PASSWORD,
@@ -62,9 +69,12 @@ SOCKET="/run/$APP_NAME/gunicorn.sock"
 ENV_FILE="$APP_ROOT/backend/.env"
 HTPASSWD="/etc/nginx/$APP_NAME.htpasswd"
 PROXY_PARAMS="/etc/nginx/$APP_NAME-proxy.conf"
-APP_REPO="${APP_REPO:-}"
+APP_REPO="${APP_REPO:-https://github.com/waltersIT/recipe-box.git}"
 APP_BRANCH="${APP_BRANCH:-main}"
-SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+APP_SUBDIR=recipe # where the app lives inside the repo
+SRC_DIR="/srv/$APP_NAME-src" # git checkout of APP_REPO; APP_ROOT is synced from it
+SELF_SUM="$(cksum <"${BASH_SOURCE[0]}")"
+ORIG_ARGS=("$@")
 
 RECONFIGURE=0
 WANT_HTTPS=0
@@ -113,6 +123,42 @@ imds() {
     curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $imds_token" \
         "http://169.254.169.254/latest/meta-data/$1" 2>/dev/null || true
 }
+
+# --- latest code -------------------------------------------------------------------
+# Pulled before anything else, so the rest of the run (the questions included)
+# is main's version of this script.
+
+step "Pulling $APP_BRANCH from $APP_REPO"
+if ! command -v git >/dev/null 2>&1; then
+    if [[ $PKG == dnf ]]; then
+        dnf install -y -q git >/dev/null
+    else
+        apt-get update -qq && apt-get install -y -qq git >/dev/null
+    fi
+fi
+if ! id -u "$APP_USER" >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir "/home/$APP_USER" --shell /usr/sbin/nologin "$APP_USER" 2>/dev/null \
+        || useradd --system --create-home --home-dir "/home/$APP_USER" --shell /sbin/nologin "$APP_USER"
+fi
+if [[ -d $SRC_DIR/.git ]]; then
+    chown -R "$APP_USER:$APP_USER" "$SRC_DIR"
+    as_app git -C "$SRC_DIR" remote set-url origin "$APP_REPO"
+    as_app git -C "$SRC_DIR" fetch --quiet origin "$APP_BRANCH"
+    as_app git -C "$SRC_DIR" checkout --quiet --force -B "$APP_BRANCH" "origin/$APP_BRANCH"
+    as_app git -C "$SRC_DIR" clean --quiet -ffdx
+else
+    rm -rf "$SRC_DIR"
+    install -d -o "$APP_USER" -g "$APP_USER" -m 750 "$SRC_DIR"
+    as_app git clone --quiet --branch "$APP_BRANCH" "$APP_REPO" "$SRC_DIR"
+fi
+note "$(as_app git -C "$SRC_DIR" log -1 --format='%h %s (%cr)')"
+CODE_DIR="$SRC_DIR/$APP_SUBDIR"
+[[ -f $CODE_DIR/deploy.sh && -d $CODE_DIR/backend && -d $CODE_DIR/frontend ]] \
+    || die "$APP_REPO ($APP_BRANCH) has no $APP_SUBDIR/ folder with the app in it."
+if [[ -z ${DEPLOY_REEXEC:-} && $(cksum <"$CODE_DIR/deploy.sh") != "$SELF_SUM" ]]; then
+    note "deploy.sh on $APP_BRANCH differs from this copy, so running that one instead"
+    exec env DEPLOY_REEXEC=1 bash "$CODE_DIR/deploy.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+fi
 
 # --- settings ----------------------------------------------------------------------
 # Asked first, so the slow part afterwards can run unattended.
@@ -281,39 +327,21 @@ fi
 # --- service account & code ------------------------------------------------------
 
 step "Setting up the $APP_USER service account"
-if ! id -u "$APP_USER" >/dev/null 2>&1; then
-    useradd --system --create-home --home-dir "/home/$APP_USER" --shell /usr/sbin/nologin "$APP_USER" 2>/dev/null \
-        || useradd --system --create-home --home-dir "/home/$APP_USER" --shell /sbin/nologin "$APP_USER"
-fi
 # Lets nginx open the gunicorn socket and read uploaded photos.
 usermod -aG "$APP_USER" "$WEB_USER"
 install -d -o "$APP_USER" -g "$APP_USER" -m 750 "$DATA_DIR" "$DATA_DIR/media"
 
 step "Updating the code in $APP_ROOT"
 mkdir -p "$APP_ROOT"
-if [[ -n $APP_REPO ]]; then
-    if [[ -d $APP_ROOT/.git ]]; then
-        chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
-        as_app git -C "$APP_ROOT" fetch --quiet origin "$APP_BRANCH"
-        as_app git -C "$APP_ROOT" reset --quiet --hard "origin/$APP_BRANCH"
-    else
-        [[ -z $(ls -A "$APP_ROOT") ]] || die "$APP_ROOT isn't empty and isn't a git checkout."
-        git clone --quiet --branch "$APP_BRANCH" "$APP_REPO" "$APP_ROOT"
-    fi
-    note "$(git -C "$APP_ROOT" log -1 --format='%h %s')"
-elif [[ $SOURCE_DIR != "$APP_ROOT" ]]; then
-    [[ -d $SOURCE_DIR/backend && -d $SOURCE_DIR/frontend ]] || die "run this from inside the recipe folder."
-    # --delete drops files removed locally; excluded paths (the server's
-    # virtualenv, node_modules, .env and uploads) are left alone. macOS
-    # metadata files (._*) are hidden but not protected, so stray ones go too.
-    rsync -a --delete --filter 'H ._*' --filter 'H .DS_Store' \
-        --exclude '.git/' --exclude '.claude/' --exclude '__pycache__/' \
-        --exclude 'backend/.venv/' --exclude 'backend/.env' --exclude 'backend/db.sqlite3' \
-        --exclude 'backend/media/' --exclude 'backend/staticfiles/' \
-        --exclude 'frontend/node_modules/' --exclude 'frontend/dist/' \
-        "$SOURCE_DIR/" "$APP_ROOT/"
-    note "copied from $SOURCE_DIR"
-fi
+# --delete drops files removed on main; excluded paths (the server's
+# virtualenv, node_modules, .env and uploads) are left alone.
+rsync -a --delete \
+    --exclude '.git/' --exclude '.claude/' --exclude '__pycache__/' \
+    --exclude 'backend/.venv/' --exclude 'backend/.env' --exclude 'backend/db.sqlite3' \
+    --exclude 'backend/media/' --exclude 'backend/staticfiles/' \
+    --exclude 'frontend/node_modules/' --exclude 'frontend/dist/' \
+    "$CODE_DIR/" "$APP_ROOT/"
+note "copied from $CODE_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
 chmod 750 "$APP_ROOT"
 
@@ -755,7 +783,7 @@ fi
 [[ -z $DOMAIN ]] && note "Without a domain, give the instance an Elastic IP so its address survives a stop/start."
 cat <<EOF
 
-    Redeploy:   sudo $APP_ROOT/deploy.sh  (git checkout: cd $APP_ROOT && git pull first)
+    Redeploy:   sudo $APP_ROOT/deploy.sh  (pulls the latest $APP_BRANCH from GitHub; push first)
     Logs:       journalctl -u $SERVICE -f
                 sudo tail -f /var/log/nginx/$APP_NAME.error.log
     Settings:   sudo $APP_ROOT/deploy.sh --reconfigure
