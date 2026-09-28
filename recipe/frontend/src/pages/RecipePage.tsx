@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { useAuth } from '../auth'
 import Avatar from '../components/Avatar'
+import Comments from '../components/Comments'
 import LikeButton from '../components/LikeButton'
 import { RecipePlaceholder } from '../components/RecipeCard'
 import StarRating from '../components/StarRating'
@@ -291,6 +292,8 @@ export default function RecipePage() {
           )}
         </section>
       </div>
+
+      <Comments recipeId={recipe.id} />
     </article>
   )
 }

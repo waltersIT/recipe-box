@@ -4,6 +4,7 @@ import uuid
 
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
 from rest_framework import serializers
 
@@ -11,7 +12,7 @@ from accounts.serializers import UserBriefSerializer
 
 from .importers import ImportFailed
 from .importers.fetch import fetch_image
-from .models import Attachment, Like, Recipe, Tag
+from .models import Attachment, Comment, Like, Recipe, Tag
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,65 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
     def get_url(self, obj):
         return obj.file.url if obj.file else None
+
+
+class CommentSerializer(serializers.ModelSerializer):
+    author = UserBriefSerializer(read_only=True)
+    # Lets the UI show the author their own Edit and Delete without knowing the
+    # rules (the recipe's owner can delete a comment left on their recipe).
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+    # The comment being answered. Replying to a reply joins its thread rather
+    # than nesting deeper, so this always comes back as a top-level comment.
+    parent = serializers.PrimaryKeyRelatedField(queryset=Comment.objects.all(), required=False, allow_null=True)
+    replies = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Comment
+        fields = [
+            "id", "author", "body", "parent", "replies", "edited", "edited_at",
+            "can_edit", "can_delete", "created_at",
+        ]
+        read_only_fields = ["edited_at", "created_at"]
+
+    def get_replies(self, obj):
+        # Only a top-level comment carries a thread, so this never recurses.
+        if obj.parent_id:
+            return []
+        return CommentSerializer(obj.replies.all(), many=True, context=self.context).data
+
+    def validate_body(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Write something first.")
+        return value
+
+    def validate_parent(self, value):
+        if value is None:
+            return None
+        recipe = self.context.get("recipe")
+        if recipe is not None and value.recipe_id != recipe.pk:
+            raise serializers.ValidationError("That comment is on a different recipe.")
+        return value.thread
+
+    def _viewer(self):
+        return getattr(self.context.get("request"), "user", None)
+
+    def get_can_edit(self, obj):
+        viewer = self._viewer()
+        return bool(viewer and viewer.is_authenticated and obj.author_id == viewer.id)
+
+    def get_can_delete(self, obj):
+        viewer = self._viewer()
+        if not (viewer and viewer.is_authenticated):
+            return False
+        return obj.author_id == viewer.id or obj.recipe.owner_id == viewer.id
+
+    def update(self, instance, validated_data):
+        # Editing rewrites the words; it never moves a comment to another thread.
+        validated_data.pop("parent", None)
+        validated_data["edited_at"] = timezone.now()
+        return super().update(instance, validated_data)
 
 
 class LikedField(serializers.Field):

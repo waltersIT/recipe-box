@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  Comment,
   HomeFeed,
   ImportConfig,
   ImportResult,
@@ -110,6 +111,11 @@ export const api = {
   },
   home: () => request<HomeFeed>('/home/'),
   getRecipe: (id: number | string) => request<Recipe>(`/recipes/${id}/`),
+  comments: (recipeId: number | string) => request<Comment[]>(`/recipes/${recipeId}/comments/`),
+  addComment: (recipeId: number, body: string, parent?: number) =>
+    request<Comment>(`/recipes/${recipeId}/comments/`, sendJson('POST', { body, parent: parent ?? null })),
+  updateComment: (id: number, body: string) => request<Comment>(`/comments/${id}/`, sendJson('PATCH', { body })),
+  deleteComment: (id: number) => request<void>(`/comments/${id}/`, { method: 'DELETE' }),
   like: (id: number, liked: boolean) =>
     request<LikeResult>(`/recipes/${id}/like/`, { method: liked ? 'POST' : 'DELETE' }),
   createRecipe: (data: RecipeInput) => request<Recipe>('/recipes/', sendJson('POST', data)),

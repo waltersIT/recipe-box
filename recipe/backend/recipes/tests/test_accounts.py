@@ -9,7 +9,7 @@ from django.test import override_settings
 from rest_framework.test import APIClient, APITestCase
 
 from accounts.models import Follow, Profile
-from recipes.models import Like, Recipe
+from recipes.models import Comment, Like, Recipe
 
 from . import samples
 
@@ -314,3 +314,130 @@ class HomeFeedTests(APITestCase):
         self.client.force_login(self.kim)
         self.assertEqual([r["title"] for r in self.client.get("/api/recipes/?mine=1").data], ["Mine"])
         self.assertEqual([r["title"] for r in self.client.get("/api/recipes/?user=sam").data], ["Pancakes"])
+
+
+class CommentTests(APITestCase):
+    def setUp(self):
+        self.sam = make_user("sam")
+        self.kim = make_user("kim")
+        self.recipe = make_recipe(self.sam)
+        self.url = f"/api/recipes/{self.recipe.pk}/comments/"
+
+    def post(self, body="Made this twice."):
+        return self.client.post(self.url, {"body": body}, format="json")
+
+    def test_anyone_can_read_comments(self):
+        self.client.force_login(self.kim)
+        self.post()
+        self.client.logout()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]["body"], "Made this twice.")
+        self.assertEqual(response.data[0]["author"]["username"], "kim")
+        self.assertFalse(response.data[0]["edited"])
+        # Signed out, nothing is offered as editable.
+        self.assertEqual((response.data[0]["can_edit"], response.data[0]["can_delete"]), (False, False))
+
+    def test_commenting_needs_an_account(self):
+        self.assertEqual(self.post().status_code, 403)
+        self.client.force_login(self.kim)
+        self.assertEqual(self.post().status_code, 201)
+
+    def test_an_empty_comment_is_refused(self):
+        self.client.force_login(self.kim)
+        self.assertEqual(self.post(body="   ").status_code, 400)
+
+    def test_comments_are_oldest_first(self):
+        self.client.force_login(self.kim)
+        self.post("First")
+        self.post("Second")
+        self.assertEqual([c["body"] for c in self.client.get(self.url).data], ["First", "Second"])
+
+    def test_the_author_can_edit_and_delete_their_own(self):
+        self.client.force_login(self.kim)
+        comment_id = self.post().data["id"]
+        detail = f"/api/comments/{comment_id}/"
+        response = self.client.patch(detail, {"body": "Made this three times."}, format="json")
+        self.assertEqual(response.data["body"], "Made this three times.")
+        self.assertTrue(response.data["edited"])
+        self.assertEqual(self.client.delete(detail).status_code, 204)
+        self.assertFalse(Comment.objects.exists())
+
+    def test_someone_else_cannot_touch_your_comment(self):
+        self.client.force_login(self.kim)
+        detail = f"/api/comments/{self.post().data['id']}/"
+        self.client.force_login(make_user("ash"))
+        self.assertEqual(self.client.patch(detail, {"body": "nope"}, format="json").status_code, 403)
+        self.assertEqual(self.client.delete(detail).status_code, 403)
+
+    def test_the_recipe_owner_can_delete_but_not_rewrite_a_comment(self):
+        self.client.force_login(self.kim)
+        detail = f"/api/comments/{self.post().data['id']}/"
+        self.client.force_login(self.sam)
+        self.assertEqual(self.client.patch(detail, {"body": "nope"}, format="json").status_code, 403)
+        self.assertEqual(self.client.get(self.url).data[0]["can_delete"], True)
+        self.assertEqual(self.client.delete(detail).status_code, 204)
+
+    def test_deleting_a_recipe_takes_its_comments(self):
+        self.client.force_login(self.kim)
+        self.post()
+        self.recipe.delete()
+        self.assertFalse(Comment.objects.exists())
+
+
+class ReplyTests(APITestCase):
+    def setUp(self):
+        self.sam = make_user("sam")
+        self.kim = make_user("kim")
+        self.recipe = make_recipe(self.sam)
+        self.url = f"/api/recipes/{self.recipe.pk}/comments/"
+        self.client.force_login(self.kim)
+        self.comment = Comment.objects.create(recipe=self.recipe, author=self.sam, body="Halve the sugar.")
+
+    def reply(self, body="Agreed.", parent=None):
+        return self.client.post(self.url, {"body": body, "parent": parent or self.comment.pk}, format="json")
+
+    def test_a_reply_is_listed_under_the_comment_it_answers(self):
+        self.assertEqual(self.reply().status_code, 201)
+        threads = self.client.get(self.url).data
+        self.assertEqual(len(threads), 1)
+        self.assertEqual(threads[0]["body"], "Halve the sugar.")
+        self.assertEqual([r["body"] for r in threads[0]["replies"]], ["Agreed."])
+        self.assertEqual(threads[0]["replies"][0]["parent"], self.comment.pk)
+        self.assertEqual(threads[0]["replies"][0]["replies"], [])
+
+    def test_replying_to_a_reply_joins_the_same_thread(self):
+        first = self.reply().data
+        second = self.reply(body="Same here.", parent=first["id"])
+        self.assertEqual(second.data["parent"], self.comment.pk)
+        threads = self.client.get(self.url).data
+        self.assertEqual([r["body"] for r in threads[0]["replies"]], ["Agreed.", "Same here."])
+
+    def test_replying_needs_an_account(self):
+        self.client.logout()
+        self.assertEqual(self.reply().status_code, 403)
+
+    def test_a_reply_cannot_point_at_another_recipe(self):
+        elsewhere = Comment.objects.create(recipe=make_recipe(self.sam, title="Chili"), author=self.sam, body="Hi")
+        self.assertEqual(self.reply(parent=elsewhere.pk).status_code, 400)
+
+    def test_editing_a_reply_cannot_move_it_to_another_thread(self):
+        reply_id = self.reply().data["id"]
+        other = Comment.objects.create(recipe=self.recipe, author=self.sam, body="Another thread")
+        response = self.client.patch(
+            f"/api/comments/{reply_id}/", {"body": "Still agreed.", "parent": other.pk}, format="json"
+        )
+        self.assertEqual(response.data["parent"], self.comment.pk)
+        self.assertEqual(response.data["body"], "Still agreed.")
+
+    def test_deleting_a_comment_takes_its_replies(self):
+        self.reply()
+        self.client.force_login(self.sam)
+        self.assertEqual(self.client.delete(f"/api/comments/{self.comment.pk}/").status_code, 204)
+        self.assertFalse(Comment.objects.exists())
+
+    def test_the_recipe_owner_can_delete_a_reply(self):
+        reply_id = self.reply().data["id"]
+        self.client.force_login(self.sam)
+        self.assertEqual(self.client.delete(f"/api/comments/{reply_id}/").status_code, 204)
+        self.assertTrue(Comment.objects.filter(pk=self.comment.pk).exists())

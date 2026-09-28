@@ -5,6 +5,7 @@ from . import views
 
 router = DefaultRouter()
 router.register("recipes", views.RecipeViewSet, basename="recipe")
+router.register("comments", views.CommentViewSet, basename="comment")
 
 urlpatterns = [
     path("", include(router.urls)),

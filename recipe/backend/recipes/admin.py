@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Attachment, Like, Recipe, Tag
+from .models import Attachment, Comment, Like, Recipe, Tag
 
 
 class AttachmentInline(admin.TabularInline):
@@ -27,3 +27,10 @@ class TagAdmin(admin.ModelAdmin):
 class LikeAdmin(admin.ModelAdmin):
     list_display = ["recipe", "user", "created_at"]
     raw_id_fields = ["recipe", "user"]
+
+
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    list_display = ["recipe", "author", "created_at"]
+    search_fields = ["body", "author__username", "recipe__title"]
+    raw_id_fields = ["recipe", "author"]

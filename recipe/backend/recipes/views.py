@@ -2,21 +2,21 @@ import os
 import uuid
 
 from django.conf import settings
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Prefetch, Q
 from django.shortcuts import get_object_or_404
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action, api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
 from .images import BadImage, prepare_web_image
 from .importers import ImportFailed, import_from_files, import_from_html, import_from_url
 from .importers.llm import llm_enabled
 from .importers.ocr import engine_name
-from .models import Attachment, Like, Recipe, Tag
-from .permissions import ReadAnyWriteOwn
-from .serializers import AttachmentSerializer, RecipeListSerializer, RecipeSerializer
+from .models import Attachment, Comment, Like, Recipe, Tag
+from .permissions import OwnCommentOrRecipeOwner, ReadAnyWriteOwn
+from .serializers import AttachmentSerializer, CommentSerializer, RecipeListSerializer, RecipeSerializer
 
 # How many recipes each section of the landing page shows.
 HOME_SECTION_SIZE = 12
@@ -100,6 +100,24 @@ class RecipeViewSet(viewsets.ModelViewSet):
         recipe.view_count += 1
         request.session[VIEWED_SESSION_KEY] = [*seen[-(VIEWED_SESSION_MAX - 1):], recipe.pk]
 
+    @action(detail=True, methods=["get", "post"], permission_classes=[IsAuthenticatedOrReadOnly])
+    def comments(self, request, pk=None):
+        """Reading a recipe's comments is open; leaving one needs an account."""
+        recipe = self.get_object()
+        context = {"request": request, "recipe": recipe}
+        if request.method == "POST":
+            serializer = CommentSerializer(data=request.data, context=context)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(recipe=recipe, author=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Threads come back whole: top-level comments, each with its replies.
+        comments = (
+            recipe.comments.filter(parent__isnull=True)
+            .select_related("author__profile", "recipe")
+            .prefetch_related(Prefetch("replies", queryset=Comment.objects.select_related("author__profile", "recipe")))
+        )
+        return Response(CommentSerializer(comments, many=True, context=context).data)
+
     @action(detail=True, methods=["post", "delete"], permission_classes=[IsAuthenticated])
     def like(self, request, pk=None):
         recipe = self.get_object()
@@ -157,6 +175,17 @@ class RecipeViewSet(viewsets.ModelViewSet):
         attachment = get_object_or_404(Attachment, pk=attachment_id, recipe=recipe)
         attachment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CommentViewSet(
+    mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet
+):
+    """Editing and deleting a comment. They're listed and created under their
+    recipe, at /api/recipes/<id>/comments/."""
+
+    serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated, OwnCommentOrRecipeOwner]
+    queryset = Comment.objects.select_related("author__profile", "recipe").prefetch_related("replies__author__profile")
 
 
 @api_view(["GET"])

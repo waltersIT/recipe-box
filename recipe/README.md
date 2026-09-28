@@ -2,7 +2,7 @@
 
 A shared recipe box in the spirit of Paprika. It imports recipes from **web links**, **PDFs**, and **screenshots or photos**, and lets you review every import before saving it.
 
-**Anyone can read every recipe without an account.** An account is needed to add one, and only the person who uploaded a recipe can edit or delete it. Each account has a profile page listing what they've uploaded, and you can follow the cooks whose recipes you want to see.
+**Anyone can read every recipe without an account.** An account is needed to add one or to join the conversation under it, and only the person who uploaded a recipe can edit or delete it. Each account has a profile page listing what they've uploaded, and you can follow the cooks whose recipes you want to see.
 
 - **Backend:** Django 6 + Django REST Framework, SQLite (`backend/db.sqlite3`)
 - **Frontend:** React 19 + TypeScript + Vite
@@ -67,7 +67,9 @@ A typical import costs a few cents.
 ## Accounts, profiles and following
 
 - **Reading is open.** Recipes, profiles, tags and the landing page need no account.
-- **Uploading needs one.** Adding a recipe, importing, liking and following all ask you to sign in first. Editing and deleting are limited to the recipe's owner.
+- **Uploading needs one.** Adding a recipe, importing, commenting, liking and following all ask you to sign in first. Editing and deleting a recipe are limited to its owner.
+- **Comments** sit under each recipe, oldest first, and you can reply to one. Anyone can read them. Their author can rewrite or remove their own, and a recipe's owner can remove one left on their recipe, so nobody has to live with what someone else wrote on their page. Deleting a comment takes its replies with it.
+- **Threads are one level deep.** Replying to a reply joins the same thread and prefills an `@name` rather than nesting further, which keeps a long conversation readable on a phone.
 - **Profiles** live at `/u/<username>` and list everything that person has uploaded, with a display name, a short bio and a photo.
 - **The landing page** shows the newest recipes from the people you follow, then what's popular across the whole box — most viewed and liked, with a like counting for ten views. A view is counted once per browser session, and looking at your own recipe doesn't count.
 - Signing in uses a Django session cookie, so writes carry a CSRF token. In development the dev server's origin (`http://localhost:5173`) is trusted automatically; in production the app and the React build share one origin.
@@ -88,7 +90,7 @@ cd backend && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python 
 cd frontend && npm run lint && npm run build
 ```
 
-The backend tests generate their own sample screenshots and PDFs, including a two-column card, a scanned PDF, and two overlapping phone screenshots. They cover parsing, layout, the Claude request and fallback (mocked), the API, and accounts: who can read, who can upload, profiles, following, likes, view counts, and the CSRF checks on signing in.
+The backend tests generate their own sample screenshots and PDFs, including a two-column card, a scanned PDF, and two overlapping phone screenshots. They cover parsing, layout, the Claude request and fallback (mocked), the API, and accounts: who can read, who can upload, profiles, following, likes, comments, view counts, and the CSRF checks on signing in.
 
 ## Project layout
 
@@ -99,7 +101,7 @@ backend/
     models.py             Profile, Follow
     views.py, urls.py     sign up/in/out, profiles, following (/api/auth/…, /api/users/…)
   recipes/
-    models.py             Recipe, Tag, Like, Attachment
+    models.py             Recipe, Tag, Like, Comment, Attachment
     permissions.py        public to read, owner to change
     views.py, urls.py     REST API (/api/recipes, /api/import/...)
     importers/
@@ -115,7 +117,7 @@ backend/
 frontend/src/
   auth.ts                 who's signed in (context + hook)
   pages/                  Home, Recipe, Profile, Sign in/up, Editor (also the import review), Import, Capture
-  components/             cards, avatar, like button, rating, tag input, file drop, source preview, bookmarklet
+  components/             cards, avatar, like button, comments, rating, tag input, file drop, source preview, bookmarklet
   lib/                    scaling, formatting
 ```
 

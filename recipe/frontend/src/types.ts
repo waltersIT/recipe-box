@@ -42,6 +42,23 @@ export interface Me {
   profile: Profile
 }
 
+export interface Comment {
+  id: number
+  author: UserBrief
+  body: string
+  /** The comment this answers; null for a top-level one. Threads are one deep. */
+  parent: number | null
+  /** Only ever filled in on a top-level comment. */
+  replies: Comment[]
+  edited: boolean
+  edited_at: string | null
+  /** Whether the person reading may rewrite it (its author). */
+  can_edit: boolean
+  /** Its author, and the owner of the recipe it's on. */
+  can_delete: boolean
+  created_at: string
+}
+
 export interface Attachment {
   id: number
   url: string

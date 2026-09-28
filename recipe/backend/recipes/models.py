@@ -120,6 +120,43 @@ class Like(models.Model):
         return f"{self.user} ♥ {self.recipe}"
 
 
+class Comment(models.Model):
+    """Something a reader said about a recipe, or a reply to someone who did.
+
+    Comments read like a conversation, so they're kept oldest first. Anyone can
+    read them; an account is needed to leave one.
+
+    Threads are one level deep: a reply hangs off a top-level comment, and
+    replying to a reply joins that same thread rather than nesting further.
+    Deep nesting is hard to read and harder to answer on a phone.
+    """
+
+    recipe = models.ForeignKey(Recipe, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comments")
+    parent = models.ForeignKey(
+        "self", on_delete=models.CASCADE, related_name="replies", null=True, blank=True
+    )
+    body = models.TextField(max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    # Set when the author rewrites the comment, so the UI can say "edited".
+    edited_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.author} on {self.recipe}"
+
+    @property
+    def edited(self) -> bool:
+        return self.edited_at is not None
+
+    @property
+    def thread(self) -> "Comment":
+        """The top-level comment this belongs to (itself, for a top-level one)."""
+        return self.parent or self
+
+
 class Attachment(models.Model):
     """An original file a recipe was imported from (PDF, screenshot, photo)."""
 
