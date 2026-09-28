@@ -1,47 +1,61 @@
-import io
 import os
 import uuid
 
 from django.conf import settings
-from django.core.files.base import ContentFile
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
-from PIL import Image, ImageOps, UnidentifiedImageError
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, parser_classes
+from rest_framework.decorators import action, api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .images import BadImage, prepare_web_image
 from .importers import ImportFailed, import_from_files, import_from_html, import_from_url
 from .importers.llm import llm_enabled
 from .importers.ocr import engine_name
-from .models import Attachment, Recipe, Tag
+from .models import Attachment, Like, Recipe, Tag
+from .permissions import ReadAnyWriteOwn
 from .serializers import AttachmentSerializer, RecipeListSerializer, RecipeSerializer
 
-MAX_IMAGE_BYTES = 15 * 1024 * 1024
-WEB_IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif"}
+# How many recipes each section of the landing page shows.
+HOME_SECTION_SIZE = 12
+# Recipe ids kept in the session so refreshing a page doesn't count again.
+VIEWED_SESSION_KEY = "viewed_recipes"
+VIEWED_SESSION_MAX = 200
 # Original files kept with a recipe. Anything else (e.g. .html) could run script
 # on this site's origin when opened, so it isn't stored.
 ATTACHMENT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff", ".bmp"}
 
 
 class RecipeViewSet(viewsets.ModelViewSet):
-    ORDERINGS = {
-        "newest": "-created_at",
-        "oldest": "created_at",
-        "title": "title",
-        "rating": "-rating",
-        "updated": "-updated_at",
-    }
+    """Recipes are public to read. Adding one needs an account, and only the
+    person who uploaded a recipe can edit or delete it."""
+
+    permission_classes = [ReadAnyWriteOwn]
 
     def get_serializer_class(self):
         return RecipeListSerializer if self.action == "list" else RecipeSerializer
 
     def get_queryset(self):
-        queryset = Recipe.objects.prefetch_related("tags")
+        viewer = self.request.user
+        queryset = Recipe.objects.for_listing(viewer)
         if self.action != "list":
             return queryset.prefetch_related("attachments")
         params = self.request.query_params
+        # "mine", "following" and "liked" are about the person reading, so
+        # signed out they have nothing to show rather than everything.
+        if params.get("mine") in ("1", "true"):
+            if not viewer.is_authenticated:
+                return queryset.none()
+            queryset = queryset.filter(owner=viewer)
+        if params.get("following") in ("1", "true"):
+            if not viewer.is_authenticated:
+                return queryset.none()
+            queryset = queryset.filter(owner__follower_set__follower=viewer)
+        author = params.get("user", "").strip()
+        if author:
+            queryset = queryset.filter(owner__username__iexact=author)
         search = params.get("search", "").strip()
         if search:
             for term in search.split():
@@ -56,10 +70,46 @@ class RecipeViewSet(viewsets.ModelViewSet):
         tag = params.get("tag", "").strip()
         if tag:
             queryset = queryset.filter(tags__name__iexact=tag)
-        if params.get("favorite") in ("1", "true"):
-            queryset = queryset.filter(is_favorite=True)
-        ordering = self.ORDERINGS.get(params.get("ordering", ""), "-created_at")
-        return queryset.distinct().order_by(ordering, "-id")
+        if params.get("liked") in ("1", "true"):
+            if not viewer.is_authenticated:
+                return queryset.none()
+            queryset = queryset.filter(likes__user=viewer)
+        queryset = queryset.distinct()
+        if params.get("ordering") == "popular":
+            return queryset.popular()
+        ordering = Recipe.ORDERINGS.get(params.get("ordering", ""), "-created_at")
+        return queryset.order_by(ordering, "-id")
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+    def retrieve(self, request, *args, **kwargs):
+        recipe = self.get_object()
+        self._count_view(recipe)
+        return Response(self.get_serializer(recipe).data)
+
+    def _count_view(self, recipe):
+        """One view per recipe per browser session, and never your own."""
+        request = self.request
+        if recipe.owner_id and recipe.owner_id == request.user.id:
+            return
+        seen = request.session.get(VIEWED_SESSION_KEY, [])
+        if recipe.pk in seen:
+            return
+        Recipe.objects.filter(pk=recipe.pk).update(view_count=F("view_count") + 1)
+        recipe.view_count += 1
+        request.session[VIEWED_SESSION_KEY] = [*seen[-(VIEWED_SESSION_MAX - 1):], recipe.pk]
+
+    @action(detail=True, methods=["post", "delete"], permission_classes=[IsAuthenticated])
+    def like(self, request, pk=None):
+        recipe = self.get_object()
+        if request.method == "DELETE":
+            Like.objects.filter(recipe=recipe, user=request.user).delete()
+        else:
+            Like.objects.get_or_create(recipe=recipe, user=request.user)
+        recipe.refresh_from_db(fields=["like_count"])
+        recipe.liked_by_viewer = request.method == "POST"
+        return Response({"id": recipe.pk, "like_count": recipe.like_count, "liked": recipe.liked_by_viewer})
 
     @action(detail=True, methods=["post", "delete"], parser_classes=[MultiPartParser])
     def image(self, request, pk=None):
@@ -67,30 +117,19 @@ class RecipeViewSet(viewsets.ModelViewSet):
         if request.method == "DELETE":
             if recipe.image:
                 recipe.image.delete(save=True)
-            return Response(RecipeSerializer(recipe).data)
+            return Response(self.get_serializer(recipe).data)
 
         upload = request.FILES.get("image")
         if upload is None:
             return Response({"detail": "Choose an image to upload."}, status=status.HTTP_400_BAD_REQUEST)
-        if upload.size > MAX_IMAGE_BYTES:
-            return Response({"detail": "Images must be under 15 MB."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            image = Image.open(upload)
-            image.load()
-        except (UnidentifiedImageError, OSError):
-            return Response({"detail": "That file isn't an image."}, status=status.HTTP_400_BAD_REQUEST)
-        if image.format in WEB_IMAGE_FORMATS:
-            upload.seek(0)
-            content, extension = upload, WEB_IMAGE_FORMATS[image.format]
-        else:
-            # e.g. HEIC photos from an iPhone, which browsers can't display.
-            buffer = io.BytesIO()
-            ImageOps.exif_transpose(image).convert("RGB").save(buffer, format="JPEG", quality=90)
-            content, extension = ContentFile(buffer.getvalue()), ".jpg"
+            content, extension = prepare_web_image(upload)
+        except BadImage as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if recipe.image:
             recipe.image.delete(save=False)
         recipe.image.save(f"{uuid.uuid4().hex}{extension}", content, save=True)
-        return Response(RecipeSerializer(recipe).data)
+        return Response(self.get_serializer(recipe).data)
 
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser])
     def attachments(self, request, pk=None):
@@ -114,9 +153,40 @@ class RecipeViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["delete"], url_path=r"attachments/(?P<attachment_id>\d+)")
     def delete_attachment(self, request, pk=None, attachment_id=None):
-        attachment = get_object_or_404(Attachment, pk=attachment_id, recipe_id=pk)
+        recipe = self.get_object()  # also checks that this recipe is yours
+        attachment = get_object_or_404(Attachment, pk=attachment_id, recipe=recipe)
         attachment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["GET"])
+def home(request):
+    """The landing page: recipes from the people you follow, then what's popular.
+
+    "Popular" is most viewed and liked (see `RecipeQuerySet.popular`). Recipes
+    already shown in the following section aren't repeated below it.
+    """
+    viewer = request.user
+    recipes = Recipe.objects.for_listing(viewer)
+    following, following_count = [], 0
+    if viewer.is_authenticated:
+        following_count = viewer.following_set.count()
+        if following_count:
+            following = list(
+                recipes.filter(owner__follower_set__follower=viewer).distinct().order_by("-created_at", "-id")[
+                    :HOME_SECTION_SIZE
+                ]
+            )
+    popular = recipes.exclude(pk__in=[r.pk for r in following]).popular()[:HOME_SECTION_SIZE]
+    serialize = lambda items: RecipeListSerializer(items, many=True, context={"request": request}).data
+    return Response(
+        {
+            "following": serialize(following),
+            "following_count": following_count,
+            "recommended": serialize(popular),
+            "recipe_count": Recipe.objects.count(),
+        }
+    )
 
 
 @api_view(["GET"])
@@ -148,6 +218,7 @@ def _import_response(run):
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def import_url(request):
     url = request.data.get("url", "")
     if not isinstance(url, str):
@@ -156,6 +227,7 @@ def import_url(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def import_html(request):
     """Used by the bookmarklet: the page's HTML as your browser sees it."""
     url, html = request.data.get("url", ""), request.data.get("html", "")
@@ -165,6 +237,7 @@ def import_html(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser])
 def import_files(request):
     uploads = request.FILES.getlist("files")

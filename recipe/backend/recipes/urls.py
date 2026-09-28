@@ -8,6 +8,7 @@ router.register("recipes", views.RecipeViewSet, basename="recipe")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("home/", views.home, name="home"),
     path("tags/", views.tag_list, name="tag-list"),
     path("import/config/", views.import_config, name="import-config"),
     path("import/url/", views.import_url, name="import-url"),

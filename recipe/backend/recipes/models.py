@@ -1,7 +1,11 @@
+from django.conf import settings
 from django.core.validators import MaxValueValidator
 from django.db import models
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
+
+# How much a like is worth against a view in the "popular" ordering.
+LIKE_WEIGHT = 10
 
 
 class Tag(models.Model):
@@ -14,12 +18,46 @@ class Tag(models.Model):
         return self.name
 
 
+class RecipeQuerySet(models.QuerySet):
+    def for_listing(self, viewer=None):
+        """Everything a recipe card shows, without a query per card."""
+        return self.select_related("owner__profile").prefetch_related("tags").with_liked(viewer)
+
+    def with_liked(self, viewer):
+        """Adds `liked_by_viewer` so a list of cards needs no query per card."""
+        if getattr(viewer, "is_authenticated", False):
+            return self.annotate(
+                liked_by_viewer=models.Exists(Like.objects.filter(recipe=models.OuterRef("pk"), user=viewer))
+            )
+        return self.annotate(liked_by_viewer=models.Value(False, output_field=models.BooleanField()))
+
+    def popular(self):
+        """Most viewed and liked first: what the landing page recommends.
+
+        A like is a deliberate act and a view is barely one, so likes count for
+        more. Both are stored counters, so this stays one cheap query.
+        """
+        return self.annotate(
+            score=models.F("like_count") * LIKE_WEIGHT + models.F("view_count")
+        ).order_by("-score", "-created_at", "-id")
+
+
 class Recipe(models.Model):
     """A saved recipe.
 
     `ingredients` and `instructions` are ordered lists of strings. An item that
     starts with "# " is a section heading ("# For the frosting").
     """
+
+    ORDERINGS = {
+        "newest": "-created_at",
+        "oldest": "created_at",
+        "title": "title",
+        "rating": "-rating",
+        "updated": "-updated_at",
+        "liked": "-like_count",
+        "viewed": "-view_count",
+    }
 
     class ImportMethod(models.TextChoices):
         MANUAL = "manual", "Typed in"
@@ -28,6 +66,11 @@ class Recipe(models.Model):
         PDF = "pdf", "PDF"
         IMAGE = "image", "Screenshot or photo"
 
+    # Recipes are public to read; only their owner can change them. Recipes
+    # imported before accounts existed have no owner.
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="recipes", null=True, blank=True
+    )
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
     ingredients = models.JSONField(default=list, blank=True)
@@ -44,18 +87,37 @@ class Recipe(models.Model):
     nutrition = models.JSONField(default=dict, blank=True)
     tags = models.ManyToManyField(Tag, blank=True, related_name="recipes")
     rating = models.PositiveSmallIntegerField(default=0, validators=[MaxValueValidator(5)])
-    is_favorite = models.BooleanField(default=False)
+    # Kept up to date with the Like rows so the popular ordering is one query.
+    like_count = models.PositiveIntegerField(default=0, db_index=True)
+    view_count = models.PositiveIntegerField(default=0, db_index=True)
     import_method = models.CharField(
         max_length=20, choices=ImportMethod.choices, default=ImportMethod.MANUAL
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = RecipeQuerySet.as_manager()
+
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
         return self.title
+
+
+class Like(models.Model):
+    """One person liking one recipe. Likes are public and count towards popularity."""
+
+    recipe = models.ForeignKey(Recipe, on_delete=models.CASCADE, related_name="likes")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="likes")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["recipe", "user"], name="unique_like")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} ♥ {self.recipe}"
 
 
 class Attachment(models.Model):
@@ -72,6 +134,13 @@ class Attachment(models.Model):
 
     def __str__(self):
         return self.original_name or self.file.name
+
+
+@receiver([post_save, post_delete], sender=Like)
+def _sync_like_count(sender, instance, **kwargs):
+    Recipe.objects.filter(pk=instance.recipe_id).update(
+        like_count=Like.objects.filter(recipe_id=instance.recipe_id).count()
+    )
 
 
 @receiver(post_delete, sender=Recipe)

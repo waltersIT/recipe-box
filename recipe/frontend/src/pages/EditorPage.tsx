@@ -26,16 +26,15 @@ interface Form {
   author: string
   tags: string[]
   rating: number
-  is_favorite: boolean
 }
 
 const EMPTY: Form = {
   title: '', description: '', ingredients: '', instructions: '', notes: '', servings: '',
   prep_time: '', cook_time: '', total_time: '', source_url: '', source_name: '', author: '',
-  tags: [], rating: 0, is_favorite: false,
+  tags: [], rating: 0,
 }
 
-function toForm(recipe: Partial<RecipeFields> & { rating?: number; is_favorite?: boolean }): Form {
+function toForm(recipe: Partial<RecipeFields> & { rating?: number }): Form {
   const minutes = (value: number | null | undefined) => (value ? String(value) : '')
   return {
     title: recipe.title ?? '',
@@ -52,7 +51,6 @@ function toForm(recipe: Partial<RecipeFields> & { rating?: number; is_favorite?:
     author: recipe.author ?? '',
     tags: recipe.tags ?? [],
     rating: recipe.rating ?? 0,
-    is_favorite: recipe.is_favorite ?? false,
   }
 }
 
@@ -76,7 +74,6 @@ function toPayload(form: Form): RecipeInput {
     author: form.author.trim(),
     tags: form.tags,
     rating: form.rating,
-    is_favorite: form.is_favorite,
   }
 }
 
@@ -345,13 +342,10 @@ export default function EditorPage() {
 
         <div className="field-row align-center">
           <div className="field">
-            <span className="label">Rating</span>
+            <span className="label">Your rating</span>
             <StarRating value={form.rating} onChange={(rating) => set('rating', rating)} />
+            <span className="hint">Shown on the recipe. Only you can change it.</span>
           </div>
-          <label className="checkbox">
-            <input type="checkbox" checked={form.is_favorite} onChange={(e) => set('is_favorite', e.target.checked)} />
-            Favorite
-          </label>
         </div>
 
         <div className="editor-foot button-row">

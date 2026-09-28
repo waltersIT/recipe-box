@@ -36,8 +36,13 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
-# Scheme-qualified origins allowed to POST to the Django admin, e.g. https://recipes.example.com
-CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
+# Scheme-qualified origins allowed to POST here, e.g. https://recipes.example.com.
+# In production the React build is served from this same origin, so nothing is
+# needed; in development the Vite dev server proxies /api from another port, so
+# signing in and saving arrive with its origin.
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS") or (
+    ["http://localhost:5173", "http://127.0.0.1:5173"] if DEBUG else []
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -47,6 +52,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "accounts",
     "recipes",
 ]
 
@@ -170,12 +176,17 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024
 
 REST_FRAMEWORK = {
-    # Single-user app running on localhost: no login yet. Add authentication
-    # before exposing this server to anyone else (see README).
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    # The browser signs in with a Django session cookie, so unsafe requests
+    # need the CSRF token (the frontend reads it from the csrftoken cookie).
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    # Reading recipes needs no account; each view says what writing needs.
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
-    "UNAUTHENTICATED_USER": None,
 }
+
+# Signing in is a session cookie; it doesn't need to travel to other sites.
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+LOGIN_URL = "/login"
 
 # --- Recipe import -----------------------------------------------------------
 

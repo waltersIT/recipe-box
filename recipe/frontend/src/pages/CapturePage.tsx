@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { useAuth } from '../auth'
 import { setPendingImport } from '../importStore'
 
 interface CaptureMessage {
@@ -22,6 +23,7 @@ function isCapture(data: unknown): data is CaptureMessage {
 /** Opened by the bookmarklet, which posts the recipe page's HTML here. */
 export default function CapturePage() {
   const navigate = useNavigate()
+  const { user, loading } = useAuth()
   const [status, setStatus] = useState<'waiting' | 'importing' | 'error'>(() => (window.opener ? 'waiting' : 'error'))
   const [message, setMessage] = useState(() =>
     window.opener ? '' : 'Open this page with the “Save to Recipe Box” bookmark while viewing a recipe.',
@@ -57,6 +59,19 @@ export default function CapturePage() {
       clearTimeout(timeout)
     }
   }, [navigate])
+
+  // Saving a page needs an account, and the bookmarklet opened this window
+  // directly, so there's nothing to come back to after signing in.
+  if (!loading && !user) {
+    return (
+      <div className="capture">
+        <div className="alert info">Sign in to save this recipe, then click the bookmark again.</div>
+        <Link to="/login?next=/import" className="button primary">
+          Sign in
+        </Link>
+      </div>
+    )
+  }
 
   return (
     <div className="capture">

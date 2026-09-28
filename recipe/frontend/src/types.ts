@@ -19,6 +19,29 @@ export interface RecipeFields {
   nutrition: Record<string, string>
 }
 
+export interface UserBrief {
+  username: string
+  name: string
+  avatar: string | null
+}
+
+export interface Profile extends UserBrief {
+  display_name: string
+  bio: string
+  recipe_count: number
+  follower_count: number
+  following_count: number
+  is_following: boolean
+  is_me: boolean
+  created_at: string
+}
+
+export interface Me {
+  username: string
+  email: string
+  profile: Profile
+}
+
 export interface Attachment {
   id: number
   url: string
@@ -31,7 +54,11 @@ export interface Recipe extends RecipeFields {
   id: number
   image: string | null
   rating: number
-  is_favorite: boolean
+  like_count: number
+  view_count: number
+  /** Whether the person reading has liked it. */
+  liked: boolean
+  owner: UserBrief | null
   import_method: ImportMethod
   attachments: Attachment[]
   created_at: string
@@ -47,10 +74,28 @@ export interface RecipeSummary {
   cook_time: number | null
   servings: string
   rating: number
-  is_favorite: boolean
+  like_count: number
+  view_count: number
+  liked: boolean
+  owner: UserBrief | null
   tags: string[]
   source_name: string
   created_at: string
+}
+
+export interface HomeFeed {
+  /** Recipes from the people you follow, newest first. */
+  following: RecipeSummary[]
+  following_count: number
+  /** Most viewed and liked. */
+  recommended: RecipeSummary[]
+  recipe_count: number
+}
+
+export interface LikeResult {
+  id: number
+  like_count: number
+  liked: boolean
 }
 
 export interface RecipeDraft extends RecipeFields {
@@ -79,7 +124,6 @@ export interface TagCount {
 
 export type RecipeInput = Partial<RecipeFields> & {
   rating?: number
-  is_favorite?: boolean
   import_method?: ImportMethod
   /** A remote photo (from an import) for the server to download. */
   image_url?: string

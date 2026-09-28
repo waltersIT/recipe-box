@@ -187,7 +187,7 @@ if [[ $NEED_SETTINGS -eq 1 ]]; then
 
     if [[ -z ${SITE_BASIC_AUTH:-} ]]; then
         [[ $INTERACTIVE -eq 1 ]] && echo
-        if yes_no "Password-protect the site (leave this off for public uploads; the app has no accounts yet)?" \
+        if yes_no "Put the whole site behind one shared password (off: anyone can read recipes, and accounts control the rest)?" \
             "$([[ $(env_or SITE_BASIC_AUTH False) == True ]] && echo y || echo n)"; then
             SITE_BASIC_AUTH=True
         else
@@ -749,7 +749,8 @@ if [[ $SITE_BASIC_AUTH == True ]]; then
         warn "the site is plain HTTP, so the password travels unencrypted. Point a domain at this instance, then run: sudo $APP_ROOT/deploy.sh --reconfigure"
     fi
 else
-    warn "no password: anyone with the URL can read, add and delete recipes. Turn it back on with: sudo $APP_ROOT/deploy.sh --reconfigure"
+    note "open to the web: anyone can read recipes, and an account is needed to add or change one. Sign up on the site, or make an admin account with:"
+    echo "    sudo -u $APP_USER $PY $APP_ROOT/backend/manage.py createsuperuser"
 fi
 [[ -z $DOMAIN ]] && note "Without a domain, give the instance an Elastic IP so its address survives a stop/start."
 cat <<EOF
@@ -758,5 +759,6 @@ cat <<EOF
     Logs:       journalctl -u $SERVICE -f
                 sudo tail -f /var/log/nginx/$APP_NAME.error.log
     Settings:   sudo $APP_ROOT/deploy.sh --reconfigure
+    Accounts:   sudo -u $APP_USER $PY $APP_ROOT/backend/manage.py createsuperuser
     Data:       $([[ -n $DB_HOST ]] && echo "RDS $DB_HOST" || echo "SQLite $DATA_DIR/db.sqlite3"), uploads in $DATA_DIR/media
 EOF

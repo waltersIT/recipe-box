@@ -1,7 +1,11 @@
 import type {
   Attachment,
+  HomeFeed,
   ImportConfig,
   ImportResult,
+  LikeResult,
+  Me,
+  Profile,
   Recipe,
   RecipeInput,
   RecipeSummary,
@@ -26,15 +30,36 @@ function firstFieldError(data: unknown): string | null {
   return null
 }
 
+function cookie(name: string): string {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
+  return match ? decodeURIComponent(match[1]) : ''
+}
+
+/** Django sets the CSRF cookie on the first GET; unsafe requests echo it back. */
+async function csrfToken(): Promise<string> {
+  const token = cookie('csrftoken')
+  if (token) return token
+  await fetch('/api/auth/me/', { credentials: 'same-origin' })
+  return cookie('csrftoken')
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? 'GET'
+  const options: RequestInit = { credentials: 'same-origin', ...init }
+  if (method !== 'GET' && method !== 'HEAD') {
+    options.headers = { ...init?.headers, 'X-CSRFToken': await csrfToken() }
+  }
   let response: Response
   try {
-    response = await fetch(`/api${path}`, init)
+    response = await fetch(`/api${path}`, options)
   } catch {
     throw new ApiError("Can't reach the Recipe Box server. Is the backend running?", 0)
   }
   if (!response.ok) {
-    let message = `Something went wrong (HTTP ${response.status}).`
+    let message =
+      response.status === 403
+        ? 'You need to be signed in to do that.'
+        : `Something went wrong (HTTP ${response.status}).`
     try {
       const data = await response.json()
       message = (typeof data.detail === 'string' && data.detail) || firstFieldError(data) || message
@@ -60,7 +85,14 @@ function sendFiles(field: string, files: File[]): RequestInit {
 export interface RecipeQuery {
   search?: string
   tag?: string
-  favorite?: boolean
+  /** Only recipes you've liked. */
+  liked?: boolean
+  /** Only recipes you uploaded. */
+  mine?: boolean
+  /** Only recipes from the people you follow. */
+  following?: boolean
+  /** Only recipes uploaded by this username. */
+  user?: string
   ordering?: string
 }
 
@@ -69,11 +101,17 @@ export const api = {
     const params = new URLSearchParams()
     if (query.search) params.set('search', query.search)
     if (query.tag) params.set('tag', query.tag)
-    if (query.favorite) params.set('favorite', '1')
+    if (query.liked) params.set('liked', '1')
+    if (query.mine) params.set('mine', '1')
+    if (query.following) params.set('following', '1')
+    if (query.user) params.set('user', query.user)
     if (query.ordering) params.set('ordering', query.ordering)
     return request<RecipeSummary[]>(`/recipes/?${params}`)
   },
+  home: () => request<HomeFeed>('/home/'),
   getRecipe: (id: number | string) => request<Recipe>(`/recipes/${id}/`),
+  like: (id: number, liked: boolean) =>
+    request<LikeResult>(`/recipes/${id}/like/`, { method: liked ? 'POST' : 'DELETE' }),
   createRecipe: (data: RecipeInput) => request<Recipe>('/recipes/', sendJson('POST', data)),
   updateRecipe: (id: number | string, data: RecipeInput) => request<Recipe>(`/recipes/${id}/`, sendJson('PATCH', data)),
   deleteRecipe: (id: number | string) => request<void>(`/recipes/${id}/`, { method: 'DELETE' }),
@@ -84,6 +122,23 @@ export const api = {
   deleteAttachment: (recipeId: number, attachmentId: number) =>
     request<void>(`/recipes/${recipeId}/attachments/${attachmentId}/`, { method: 'DELETE' }),
   tags: () => request<TagCount[]>('/tags/'),
+
+  // --- Accounts ---
+  me: () => request<Me | null>('/auth/me/'),
+  register: (data: { username: string; password: string; email?: string; display_name?: string }) =>
+    request<Me>('/auth/register/', sendJson('POST', data)),
+  login: (username: string, password: string) => request<Me>('/auth/login/', sendJson('POST', { username, password })),
+  logout: () => request<void>('/auth/logout/', { method: 'POST' }),
+  updateProfile: (data: { display_name?: string; bio?: string }) => request<Me>('/users/me/', sendJson('PATCH', data)),
+  uploadAvatar: (file: File) => request<Me>('/users/me/avatar/', sendFiles('avatar', [file])),
+  deleteAvatar: () => request<Me>('/users/me/avatar/', { method: 'DELETE' }),
+  profile: (username: string) => request<Profile>(`/users/${encodeURIComponent(username)}/`),
+  profileRecipes: (username: string, ordering?: string) =>
+    request<RecipeSummary[]>(`/users/${encodeURIComponent(username)}/recipes/?ordering=${ordering ?? ''}`),
+  follow: (username: string, following: boolean) =>
+    request<Profile>(`/users/${encodeURIComponent(username)}/follow/`, { method: following ? 'POST' : 'DELETE' }),
+  following: (username: string) => request<Profile[]>(`/users/${encodeURIComponent(username)}/following/`),
+  followers: (username: string) => request<Profile[]>(`/users/${encodeURIComponent(username)}/followers/`),
   importConfig: () => request<ImportConfig>('/import/config/'),
   importUrl: (url: string) => request<ImportResult>('/import/url/', sendJson('POST', { url })),
   importHtml: (url: string, html: string) => request<ImportResult>('/import/html/', sendJson('POST', { url, html })),

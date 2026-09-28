@@ -2,12 +2,13 @@ import shutil
 import tempfile
 from unittest import mock
 
+from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from recipes.importers import ImportFailed
-from recipes.models import Attachment, Recipe
+from recipes.models import Attachment, Like, Recipe
 
 from . import samples
 
@@ -20,6 +21,10 @@ class RecipeApiTests(APITestCase):
     def tearDownClass(cls):
         super().tearDownClass()
         shutil.rmtree(MEDIA, ignore_errors=True)
+
+    def setUp(self):
+        self.user = User.objects.create_user("cook", password="a-good-password-1")
+        self.client.force_login(self.user)
 
     def create(self, **overrides):
         payload = {
@@ -46,12 +51,13 @@ class RecipeApiTests(APITestCase):
 
     def test_search_filter_and_tags(self):
         self.create()
-        self.create(title="Chili", ingredients=["1 lb beef", "2 cans beans"], tags=["Dinner"], is_favorite=True)
+        chili = self.create(title="Chili", ingredients=["1 lb beef", "2 cans beans"], tags=["Dinner"]).data
+        self.client.post(f"/api/recipes/{chili['id']}/like/")
         titles = lambda r: [item["title"] for item in r.data]
         self.assertEqual(titles(self.client.get("/api/recipes/?search=beans")), ["Chili"])
         self.assertEqual(titles(self.client.get("/api/recipes/?search=FLOUR")), ["Pancakes"])
         self.assertEqual(titles(self.client.get("/api/recipes/?tag=dinner")), ["Chili"])
-        self.assertEqual(titles(self.client.get("/api/recipes/?favorite=1")), ["Chili"])
+        self.assertEqual(titles(self.client.get("/api/recipes/?liked=1")), ["Chili"])
         self.assertEqual(titles(self.client.get("/api/recipes/?ordering=title")), ["Chili", "Pancakes"])
         tags = self.client.get("/api/tags/").data
         self.assertEqual([t["name"] for t in tags], ["Breakfast", "Dinner", "Quick"])
@@ -131,6 +137,9 @@ class RecipeApiTests(APITestCase):
 
 @override_settings(RECIPE_LLM="off")
 class ImportApiTests(APITestCase):
+    def setUp(self):
+        self.client.force_login(User.objects.create_user("cook", password="a-good-password-1"))
+
     def test_config(self):
         data = self.client.get("/api/import/config/").data
         self.assertFalse(data["llm_enabled"])

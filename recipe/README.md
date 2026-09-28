@@ -1,6 +1,8 @@
 # Recipe Box
 
-A personal recipe manager in the spirit of Paprika. It imports recipes from **web links**, **PDFs**, and **screenshots or photos**, and lets you review every import before saving it.
+A shared recipe box in the spirit of Paprika. It imports recipes from **web links**, **PDFs**, and **screenshots or photos**, and lets you review every import before saving it.
+
+**Anyone can read every recipe without an account.** An account is needed to add one, and only the person who uploaded a recipe can edit or delete it. Each account has a profile page listing what they've uploaded, and you can follow the cooks whose recipes you want to see.
 
 - **Backend:** Django 6 + Django REST Framework, SQLite (`backend/db.sqlite3`)
 - **Frontend:** React 19 + TypeScript + Vite
@@ -25,6 +27,14 @@ cd frontend && npm install && npm run dev
 ```
 
 Vite proxies `/api` and `/media` to Django, so the browser only talks to one origin.
+
+To click around with something in the box, add a few demo accounts and recipes:
+
+```bash
+cd backend && .venv/bin/python manage.py seed_demo
+```
+
+It prints the usernames and the shared (fake) password it used. `--reset` recreates them. For an admin account of your own, use `manage.py createsuperuser`, or just sign up on the site.
 
 ## Importing recipes
 
@@ -54,10 +64,18 @@ Settings in `backend/.env`:
 
 A typical import costs a few cents.
 
+## Accounts, profiles and following
+
+- **Reading is open.** Recipes, profiles, tags and the landing page need no account.
+- **Uploading needs one.** Adding a recipe, importing, liking and following all ask you to sign in first. Editing and deleting are limited to the recipe's owner.
+- **Profiles** live at `/u/<username>` and list everything that person has uploaded, with a display name, a short bio and a photo.
+- **The landing page** shows the newest recipes from the people you follow, then what's popular across the whole box — most viewed and liked, with a like counting for ten views. A view is counted once per browser session, and looking at your own recipe doesn't count.
+- Signing in uses a Django session cookie, so writes carry a CSRF token. In development the dev server's origin (`http://localhost:5173`) is trusted automatically; in production the app and the React build share one origin.
+
 ## Using recipes
 
 - Search across titles, ingredients, tags, notes, and sources.
-- Filter by tag or favorites, and sort by newest, title, rating, or recently edited.
+- Filter by tag, by the recipes you've liked, or by your own, and sort by newest, popular, most liked, most viewed, title, or rating.
 - Scale ingredients ½× to 3×. Fractions, ranges, gram amounts in parentheses, and unit plurals are handled.
 - Tap ingredients to cross them off, and tap a step to mark your place.
 - "Keep screen on" uses the Wake Lock API.
@@ -70,15 +88,19 @@ cd backend && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python 
 cd frontend && npm run lint && npm run build
 ```
 
-The backend tests generate their own sample screenshots and PDFs, including a two-column card, a scanned PDF, and two overlapping phone screenshots. They cover parsing, layout, the Claude request and fallback (mocked), and the API.
+The backend tests generate their own sample screenshots and PDFs, including a two-column card, a scanned PDF, and two overlapping phone screenshots. They cover parsing, layout, the Claude request and fallback (mocked), the API, and accounts: who can read, who can upload, profiles, following, likes, view counts, and the CSRF checks on signing in.
 
 ## Project layout
 
 ```
 backend/
   config/                 Django settings & URLs
+  accounts/
+    models.py             Profile, Follow
+    views.py, urls.py     sign up/in/out, profiles, following (/api/auth/…, /api/users/…)
   recipes/
-    models.py             Recipe, Tag, Attachment
+    models.py             Recipe, Tag, Like, Attachment
+    permissions.py        public to read, owner to change
     views.py, urls.py     REST API (/api/recipes, /api/import/...)
     importers/
       url.py              link & bookmarklet imports (schema.org → text fallback)
@@ -88,10 +110,12 @@ backend/
       layout.py           reading order from positioned text (columns, rows)
       text_parser.py      rule-based recipe parser
       llm.py              optional Claude extraction
+    management/commands/  seed_demo
     tests/
 frontend/src/
-  pages/                  Library, Recipe, Editor (also the import review), Import, Capture
-  components/             cards, rating, tag input, file drop, source preview, bookmarklet
+  auth.ts                 who's signed in (context + hook)
+  pages/                  Home, Recipe, Profile, Sign in/up, Editor (also the import review), Import, Capture
+  components/             cards, avatar, like button, rating, tag input, file drop, source preview, bookmarklet
   lib/                    scaling, formatting
 ```
 
@@ -121,7 +145,7 @@ The first run asks for:
 - a domain (optional)
 - the RDS endpoint, database name, and user
 - IAM or password database auth
-- a site username and password
+- whether to put the whole site behind one shared password (off by default)
 - an Anthropic key (optional)
 
 It then installs everything, creates the database if needed, migrates, and starts the site. If you give a domain it offers a free Let's Encrypt certificate. To redeploy, run the same two commands again. Settings, the database, and uploads are kept.
@@ -133,10 +157,11 @@ AWS setup it expects:
   - An instance role with `rds-db:connect` on the database user.
   - `GRANT rds_iam TO <user>;` run once in the database.
 
-The whole site sits behind a username and password (nginx basic auth), because the app has no accounts yet. Without a domain the site is plain HTTP, so point a domain at it and turn on HTTPS.
+The site is open to the web by default: anyone can read recipes, and an account is needed to add one. `deploy.sh` still offers one shared nginx password over the whole site if you'd rather nobody sees it at all. Without a domain the site is plain HTTP, so point a domain at it and turn on HTTPS before anyone signs in over it.
 
 Useful commands on the instance:
 - Settings: `sudo /srv/recipe-box/deploy.sh --reconfigure`
+- An admin account: `sudo -u recipebox /srv/recipe-box/backend/.venv/bin/python /srv/recipe-box/backend/manage.py createsuperuser`
 - Logs: `journalctl -u recipe-box -f`
 - Uploads live in `/var/lib/recipe-box/media`, outside the code directory.
 
@@ -146,4 +171,4 @@ Link fetching refuses private and link-local addresses, which includes the EC2 m
 
 Link imports fetch one page per request, when you ask, and send a normal browser User-Agent (change it with `RECIPE_FETCH_USER_AGENT`). The app doesn't crawl, and it doesn't try to get past bot challenges. When a site blocks the server, the bookmarklet uses the page your browser already loaded.
 
-Recipes are saved with their source link, author, and site name. For a personal recipe box this is the same model Paprika and similar apps use. Turning it into a shared or commercial service changes the picture: many large recipe publishers' terms prohibit automated access, and photos and write-ups are copyrighted even when ingredient lists aren't.
+Recipes are saved with their source link, author, and site name. For a personal recipe box this is the same model Paprika and similar apps use. A site where accounts upload recipes for anyone to read is a different picture: many large recipe publishers' terms prohibit automated access, and photos and write-ups are copyrighted even when ingredient lists aren't. Imports are limited to signed-in accounts, which at least ties every upload to someone, but if you open this up publicly the copies of other sites' pages are yours to answer for.

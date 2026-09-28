@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
+import { useAuth } from '../auth'
+import Avatar from '../components/Avatar'
+import LikeButton from '../components/LikeButton'
 import { RecipePlaceholder } from '../components/RecipeCard'
 import StarRating from '../components/StarRating'
 import { IMPORT_METHOD_LABELS, formatMinutes, headingText, hostname, isHeading } from '../lib/format'
@@ -12,6 +15,7 @@ const SCALES = [0.5, 1, 2, 3]
 export default function RecipePage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [recipe, setRecipe] = useState<Recipe | null>(null)
   const [error, setError] = useState('')
   const [scale, setScale] = useState(1)
@@ -36,7 +40,7 @@ export default function RecipePage() {
   if (error) return <div className="alert error">{error}</div>
   if (!recipe || String(recipe.id) !== id) return <p className="muted">Loading…</p>
 
-  async function patch(changes: Partial<Pick<Recipe, 'rating' | 'is_favorite'>>) {
+  async function patch(changes: Partial<Pick<Recipe, 'rating'>>) {
     setRecipe((prev) => (prev ? { ...prev, ...changes } : prev))
     try {
       setRecipe(await api.updateRecipe(recipe!.id, changes))
@@ -71,6 +75,8 @@ export default function RecipePage() {
     }
   }
 
+  const isOwner = Boolean(user && recipe.owner && user.username === recipe.owner.username)
+
   const times = [
     ['Prep', recipe.prep_time],
     ['Cook', recipe.cook_time],
@@ -88,16 +94,32 @@ export default function RecipePage() {
         </div>
         <div className="recipe-hero-text">
           <h1>{recipe.title}</h1>
+          {recipe.owner && (
+            <Link to={`/u/${recipe.owner.username}`} className="byline big">
+              <Avatar user={recipe.owner} size={34} />
+              <span>
+                <strong>{recipe.owner.name}</strong>
+                <span className="muted small"> @{recipe.owner.username}</span>
+              </span>
+            </Link>
+          )}
           <div className="recipe-actions-row">
-            <StarRating value={recipe.rating} onChange={(rating) => patch({ rating })} />
-            <button
-              type="button"
-              className={`icon-button fav${recipe.is_favorite ? ' on' : ''}`}
-              aria-pressed={recipe.is_favorite}
-              onClick={() => patch({ is_favorite: !recipe.is_favorite })}
-            >
-              {recipe.is_favorite ? '♥ Favorite' : '♡ Favorite'}
-            </button>
+            <LikeButton
+              recipeId={recipe.id}
+              liked={recipe.liked}
+              count={recipe.like_count}
+              onChange={(liked, like_count) => setRecipe((prev) => (prev ? { ...prev, liked, like_count } : prev))}
+            />
+            {isOwner ? (
+              <StarRating value={recipe.rating} onChange={(rating) => patch({ rating })} />
+            ) : (
+              recipe.rating > 0 && <StarRating value={recipe.rating} />
+            )}
+            {recipe.view_count > 0 && (
+              <span className="muted small">
+                {recipe.view_count} view{recipe.view_count === 1 ? '' : 's'}
+              </span>
+            )}
           </div>
           {recipe.description && <p className="description">{recipe.description}</p>}
           <dl className="facts">
@@ -139,17 +161,21 @@ export default function RecipePage() {
             {recipe.author && <> · by {recipe.author}</>}
           </p>
           <div className="button-row">
-            <Link to={`/recipes/${recipe.id}/edit`} className="button">
-              Edit
-            </Link>
+            {isOwner && (
+              <Link to={`/recipes/${recipe.id}/edit`} className="button">
+                Edit
+              </Link>
+            )}
             {'wakeLock' in navigator && (
               <button type="button" className={`button${awake ? ' primary' : ''}`} onClick={toggleAwake}>
                 {awake ? 'Screen stays on' : 'Keep screen on'}
               </button>
             )}
-            <button type="button" className="button danger-text" onClick={remove}>
-              Delete
-            </button>
+            {isOwner && (
+              <button type="button" className="button danger-text" onClick={remove}>
+                Delete
+              </button>
+            )}
           </div>
         </div>
       </header>

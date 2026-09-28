@@ -7,9 +7,11 @@ from django.db import transaction
 from PIL import Image, UnidentifiedImageError
 from rest_framework import serializers
 
+from accounts.serializers import UserBriefSerializer
+
 from .importers import ImportFailed
 from .importers.fetch import fetch_image
-from .models import Attachment, Recipe, Tag
+from .models import Attachment, Like, Recipe, Tag
 
 log = logging.getLogger(__name__)
 
@@ -54,15 +56,39 @@ class AttachmentSerializer(serializers.ModelSerializer):
         return obj.file.url if obj.file else None
 
 
+class LikedField(serializers.Field):
+    """True when the person reading this has liked the recipe.
+
+    Lists come from `RecipeQuerySet.with_liked()`, which answers this for the
+    whole page in one query; a single recipe (e.g. the reply to a save) falls
+    back to a lookup.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(source="*", read_only=True, **kwargs)
+
+    def to_representation(self, obj):
+        annotated = getattr(obj, "liked_by_viewer", None)
+        if annotated is not None:
+            return bool(annotated)
+        user = getattr(self.context.get("request"), "user", None)
+        if user is None or not user.is_authenticated:
+            return False
+        return Like.objects.filter(recipe=obj, user=user).exists()
+
+
 class RecipeListSerializer(serializers.ModelSerializer):
     image = serializers.SerializerMethodField()
     tags = TagListField(read_only=True)
+    owner = UserBriefSerializer(read_only=True)
+    liked = LikedField()
 
     class Meta:
         model = Recipe
         fields = [
             "id", "title", "image", "total_time", "prep_time", "cook_time", "servings",
-            "rating", "is_favorite", "tags", "source_name", "created_at",
+            "rating", "like_count", "view_count", "liked", "owner", "tags", "source_name",
+            "created_at",
         ]
 
     def get_image(self, obj):
@@ -71,6 +97,8 @@ class RecipeListSerializer(serializers.ModelSerializer):
 
 class RecipeSerializer(serializers.ModelSerializer):
     image = serializers.SerializerMethodField()
+    owner = UserBriefSerializer(read_only=True)
+    liked = LikedField()
     tags = TagListField(required=False)
     ingredients = LinesField(required=False)
     instructions = LinesField(required=False)
@@ -83,10 +111,10 @@ class RecipeSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "description", "ingredients", "instructions", "notes", "servings",
             "prep_time", "cook_time", "total_time", "source_url", "source_name", "author",
-            "image", "image_url", "nutrition", "tags", "rating", "is_favorite", "import_method",
-            "attachments", "created_at", "updated_at",
+            "image", "image_url", "nutrition", "tags", "rating", "like_count", "view_count",
+            "liked", "owner", "import_method", "attachments", "created_at", "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "like_count", "view_count"]
 
     def get_image(self, obj):
         return obj.image.url if obj.image else None
