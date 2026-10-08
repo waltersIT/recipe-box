@@ -131,11 +131,18 @@ export const api = {
 
   // --- Accounts ---
   me: () => request<Me | null>('/auth/me/'),
-  register: (data: { username: string; password: string; email?: string; display_name?: string }) =>
+  register: (data: {
+    username: string
+    password: string
+    email?: string
+    display_name?: string
+    accept_terms: boolean
+  }) =>
     request<Me>('/auth/register/', sendJson('POST', data)),
   login: (username: string, password: string) => request<Me>('/auth/login/', sendJson('POST', { username, password })),
   logout: () => request<void>('/auth/logout/', { method: 'POST' }),
   updateProfile: (data: { display_name?: string; bio?: string }) => request<Me>('/users/me/', sendJson('PATCH', data)),
+  deleteAccount: (password: string) => request<void>('/users/me/', sendJson('DELETE', { password })),
   uploadAvatar: (file: File) => request<Me>('/users/me/avatar/', sendFiles('avatar', [file])),
   deleteAvatar: () => request<Me>('/users/me/avatar/', { method: 'DELETE' }),
   profile: (username: string) => request<Profile>(`/users/${encodeURIComponent(username)}/`),

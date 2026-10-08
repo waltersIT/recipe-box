@@ -12,6 +12,9 @@ class Profile(models.Model):
     bio = models.TextField(max_length=600, blank=True)
     avatar = models.ImageField(upload_to="avatars/", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # When they agreed to the Terms of Service and Privacy Policy at sign-up.
+    # Blank for accounts made outside sign-up (createsuperuser, seed_demo).
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.name

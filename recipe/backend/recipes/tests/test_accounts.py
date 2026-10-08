@@ -1,5 +1,6 @@
 """Accounts: who can read, who can upload, profiles, following, and the feed."""
 
+import os
 import shutil
 import tempfile
 
@@ -33,19 +34,29 @@ class SignUpTests(APITestCase):
     def test_register_signs_you_in(self):
         response = self.client.post(
             "/api/auth/register/",
-            {"username": "sam", "password": PASSWORD, "display_name": "Sam  Cook"},
+            {"username": "sam", "password": PASSWORD, "display_name": "Sam  Cook", "accept_terms": True},
             format="json",
         )
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["username"], "sam")
         self.assertEqual(response.data["profile"]["name"], "Sam Cook")
         self.assertEqual(self.client.get("/api/auth/me/").data["username"], "sam")
+        self.assertIsNotNone(Profile.objects.get(user__username="sam").terms_accepted_at)
+
+    def test_register_requires_agreeing_to_the_terms(self):
+        for terms in ({}, {"accept_terms": False}):
+            response = self.client.post(
+                "/api/auth/register/", {"username": "sam", "password": PASSWORD, **terms}, format="json"
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("accept_terms", response.data)
+        self.assertFalse(User.objects.filter(username="sam").exists())
 
     def test_register_rejects_taken_names_and_weak_passwords(self):
         make_user("sam")
-        taken = self.client.post("/api/auth/register/", {"username": "SAM", "password": PASSWORD}, format="json")
+        taken = self.client.post("/api/auth/register/", {"username": "SAM", "password": PASSWORD, "accept_terms": True}, format="json")
         self.assertEqual(taken.status_code, 400)
-        weak = self.client.post("/api/auth/register/", {"username": "kim", "password": "12345"}, format="json")
+        weak = self.client.post("/api/auth/register/", {"username": "kim", "password": "12345", "accept_terms": True}, format="json")
         self.assertEqual(weak.status_code, 400)
         self.assertIn("password", weak.data)
 
@@ -84,7 +95,7 @@ class CsrfTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
 
     def test_registering_without_the_token_is_refused(self):
-        new = {"username": "kim", "password": PASSWORD}
+        new = {"username": "kim", "password": PASSWORD, "accept_terms": True}
         self.assertEqual(self.client.post("/api/auth/register/", new, format="json").status_code, 403)
         response = self.client.post(
             "/api/auth/register/", new, format="json", headers={"x-csrftoken": self.csrf_token()}
@@ -240,6 +251,86 @@ class ProfileTests(APITestCase):
         bad = SimpleUploadedFile("me.png", b"not an image", "image/png")
         self.assertEqual(self.client.post("/api/users/me/avatar/", {"avatar": bad}, format="multipart").status_code, 400)
         self.assertIsNone(self.client.delete("/api/users/me/avatar/").data["profile"]["avatar"])
+
+
+@override_settings(MEDIA_ROOT=MEDIA)
+class DeleteAccountTests(APITestCase):
+    def setUp(self):
+        self.sam = make_user("sam")
+        self.kim = make_user("kim")
+        self.pancakes = make_recipe(self.sam, title="Pancakes")
+        self.soup = make_recipe(self.kim, title="Soup")
+
+    def delete_account(self, password=PASSWORD):
+        return self.client.delete("/api/users/me/", {"password": password}, format="json")
+
+    def test_it_needs_an_account_and_the_right_password(self):
+        self.assertEqual(self.delete_account().status_code, 403)
+        self.client.force_login(self.sam)
+        response = self.delete_account("wrong")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["detail"], "That password isn't right.")
+        self.assertEqual(self.client.delete("/api/users/me/", format="json").status_code, 400)
+        self.assertTrue(User.objects.filter(username="sam").exists())
+
+    def test_it_removes_everything_they_made_and_signs_them_out(self):
+        Like.objects.create(user=self.sam, recipe=self.soup)
+        Follow.objects.create(follower=self.sam, following=self.kim)
+        Follow.objects.create(follower=self.kim, following=self.sam)
+        Comment.objects.create(recipe=self.pancakes, author=self.kim, body="On a recipe that's going")
+        on_kims = Comment.objects.create(recipe=self.soup, author=self.sam, body="Lovely")
+        Comment.objects.create(recipe=self.soup, author=self.kim, body="Thanks!", parent=on_kims)
+        self.pancakes.image.save("p.png", SimpleUploadedFile("p.png", b"png"))
+        image = self.pancakes.image.path
+        self.client.force_login(self.sam)
+        self.client.post(
+            "/api/users/me/avatar/",
+            {"avatar": SimpleUploadedFile("me.png", samples.image_bytes(samples.two_column_card()), "image/png")},
+            format="multipart",
+        )
+        avatar = Profile.objects.get(user=self.sam).avatar.path
+
+        self.assertEqual(self.delete_account().status_code, 204)
+
+        self.assertFalse(User.objects.filter(username="sam").exists())
+        self.assertFalse(Profile.objects.filter(user_id=self.sam.pk).exists())
+        self.assertFalse(Recipe.objects.filter(pk=self.pancakes.pk).exists())
+        self.assertFalse(Follow.objects.exists())
+        self.assertFalse(Like.objects.exists())
+        self.assertEqual(Recipe.objects.get(pk=self.soup.pk).like_count, 0)
+        # Their comment stays, with no author, and so does the reply under it.
+        # Comments on their own recipes go with the recipe.
+        self.assertEqual(
+            [(c.body, c.author) for c in Comment.objects.all()], [("Lovely", None), ("Thanks!", self.kim)]
+        )
+        for path in (image, avatar):
+            self.assertFalse(os.path.exists(path), path)
+        self.assertIsNone(self.client.get("/api/auth/me/").data)
+        self.assertEqual(self.client.get("/api/users/sam/").status_code, 404)
+
+
+    def test_their_comments_show_as_deleted_and_only_the_recipe_owner_can_remove_them(self):
+        comment = Comment.objects.create(recipe=self.soup, author=self.sam, body="Lovely")
+        self.client.force_login(self.sam)
+        self.assertEqual(self.delete_account().status_code, 204)
+
+        shown = self.client.get(f"/api/recipes/{self.soup.pk}/comments/").data[0]
+        self.assertIsNone(shown["author"])
+        self.assertEqual(shown["body"], "Lovely")
+        self.assertFalse(shown["can_edit"])
+        self.assertEqual(self.client.delete(f"/api/comments/{comment.pk}/").status_code, 403)
+
+        stranger = make_user("lee")
+        self.client.force_login(stranger)
+        self.assertFalse(self.client.get(f"/api/recipes/{self.soup.pk}/comments/").data[0]["can_delete"])
+        self.assertEqual(
+            self.client.patch(f"/api/comments/{comment.pk}/", {"body": "Hijacked"}, format="json").status_code, 403
+        )
+        self.assertEqual(self.client.delete(f"/api/comments/{comment.pk}/").status_code, 403)
+
+        self.client.force_login(self.kim)
+        self.assertTrue(self.client.get(f"/api/recipes/{self.soup.pk}/comments/").data[0]["can_delete"])
+        self.assertEqual(self.client.delete(f"/api/comments/{comment.pk}/").status_code, 204)
 
 
 class FollowTests(APITestCase):

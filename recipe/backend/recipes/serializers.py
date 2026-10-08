@@ -58,6 +58,7 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
 
 class CommentSerializer(serializers.ModelSerializer):
+    # Null once the author has deleted their account; the UI shows "[deleted]".
     author = UserBriefSerializer(read_only=True)
     # Lets the UI show the author their own Edit and Delete without knowing the
     # rules (the recipe's owner can delete a comment left on their recipe).
@@ -101,13 +102,13 @@ class CommentSerializer(serializers.ModelSerializer):
 
     def get_can_edit(self, obj):
         viewer = self._viewer()
-        return bool(viewer and viewer.is_authenticated and obj.author_id == viewer.id)
+        return bool(viewer and viewer.is_authenticated and obj.author_id is not None and obj.author_id == viewer.id)
 
     def get_can_delete(self, obj):
         viewer = self._viewer()
         if not (viewer and viewer.is_authenticated):
             return False
-        return obj.author_id == viewer.id or obj.recipe.owner_id == viewer.id
+        return (obj.author_id is not None and obj.author_id == viewer.id) or obj.recipe.owner_id == viewer.id
 
     def update(self, instance, validated_data):
         # Editing rewrites the words; it never moves a comment to another thread.

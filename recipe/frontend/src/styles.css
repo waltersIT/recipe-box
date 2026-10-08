@@ -233,6 +233,24 @@ img {
   color: var(--danger);
 }
 
+.button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-contrast);
+}
+
+.danger-zone {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.danger-zone form {
+  max-width: 420px;
+}
+
+.danger-zone input {
+  width: 100%;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
@@ -741,6 +759,88 @@ input[type='checkbox'] {
   width: 100%;
 }
 
+.auth-page .terms-checkbox {
+  align-items: flex-start;
+  font-weight: 400;
+  font-size: 0.9rem;
+}
+
+.auth-page .terms-checkbox input {
+  width: auto;
+  flex: none;
+  margin-top: 3px;
+}
+
+/* --- Footer and legal pages ------------------------------------------------ */
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 20px;
+  padding: 20px max(16px, calc((100vw - 1180px) / 2)) 32px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.site-footer nav {
+  display: flex;
+  gap: 16px;
+}
+
+.site-footer a {
+  color: var(--muted);
+}
+
+.site-footer a:hover {
+  color: var(--text);
+}
+
+.legal {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.legal section {
+  /* Clear the sticky top bar when jumping to a section. */
+  scroll-margin-top: 80px;
+}
+
+.legal h2 {
+  margin-top: 1.8em;
+}
+
+.legal h3 {
+  font-size: 1.05rem;
+  margin-top: 1.2em;
+}
+
+.legal li {
+  margin-bottom: 0.35em;
+}
+
+.legal .alert {
+  margin: 20px 0 8px;
+}
+
+.legal-emphasis {
+  font-size: 0.9rem;
+}
+
+.legal-other {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.recipe-disclaimer {
+  margin-top: 28px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* --- Profile --------------------------------------------------------------- */
 
 .profile-page .section-head {
@@ -1144,6 +1244,20 @@ input[type='checkbox'] {
 
 .comment-author:hover {
   text-decoration: underline;
+}
+
+.comment-author.deleted-author {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.comment-author.deleted-author:hover {
+  text-decoration: none;
+}
+
+.avatar.deleted-avatar {
+  display: inline-block;
+  border: 1px dashed var(--border);
 }
 
 .comment-text {

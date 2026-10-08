@@ -1,7 +1,7 @@
 import uuid
 
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import status
@@ -65,14 +65,35 @@ def sign_out(request):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@api_view(["PATCH"])
+@api_view(["PATCH", "DELETE"])
 @permission_classes([IsAuthenticated])
 def update_me(request):
+    if request.method == "DELETE":
+        return _delete_account(request)
     profile = Profile.objects.get_or_create(user=request.user)[0]
     serializer = ProfileSerializer(profile, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)
     serializer.save()
     return _me(request)
+
+
+def _delete_account(request):
+    """Delete the signed-in user and everything they made, for good.
+
+    The password is asked for again so a borrowed, still-signed-in browser
+    can't do it. Recipes, likes, follows and the profile all go by cascade,
+    and their signals remove the uploaded photos and files and fix like counts
+    on other people's recipes. Comments on other people's recipes stay, with
+    no author, and show as "[deleted]".
+    """
+    password = request.data.get("password", "")
+    if not isinstance(password, str) or not request.user.check_password(password):
+        return Response({"detail": "That password isn't right."}, status=status.HTTP_400_BAD_REQUEST)
+    user = request.user
+    with transaction.atomic():
+        user.delete()
+    logout(request)
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(["POST", "DELETE"])

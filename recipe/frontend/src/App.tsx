@@ -9,6 +9,7 @@ import CapturePage from './pages/CapturePage'
 import EditorPage from './pages/EditorPage'
 import HomePage from './pages/HomePage'
 import ImportPage from './pages/ImportPage'
+import { PrivacyPage, TermsPage } from './pages/LegalPage'
 import ProfilePage from './pages/ProfilePage'
 import RecipePage from './pages/RecipePage'
 
@@ -50,11 +51,14 @@ function AccountMenu() {
 }
 
 function Shell() {
-  const { pathname } = useLocation()
+  const { pathname, hash } = useLocation()
   const { user } = useAuth()
   useEffect(() => {
-    window.scrollTo(0, 0)
-  }, [pathname])
+    // Links like /terms#no-liability go to that section; anything else starts at the top.
+    const target = hash && document.getElementById(decodeURIComponent(hash.slice(1)))
+    if (target) target.scrollIntoView()
+    else window.scrollTo(0, 0)
+  }, [pathname, hash])
 
   return (
     <>
@@ -80,6 +84,13 @@ function Shell() {
       <main className="page">
         <Outlet />
       </main>
+      <footer className="site-footer">
+        <span>Recipes are posted by members, who are responsible for them.</span>
+        <nav>
+          <Link to="/terms">Terms of Service</Link>
+          <Link to="/privacy">Privacy Policy</Link>
+        </nav>
+      </footer>
     </>
   )
 }
@@ -124,6 +135,8 @@ export default function App() {
             <Route path="login" element={<AuthPage mode="login" />} />
             <Route path="signup" element={<AuthPage mode="signup" />} />
             <Route path="u/:username" element={<ProfilePage />} />
+            <Route path="terms" element={<TermsPage />} />
+            <Route path="privacy" element={<PrivacyPage />} />
             <Route
               path="import"
               element={

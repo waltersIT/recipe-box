@@ -7,6 +7,9 @@ import { timeAgo } from '../lib/format'
 import type { Comment, Me } from '../types'
 import Avatar from './Avatar'
 
+/** Stands in for the author of a comment whose account has been deleted. */
+const DELETED = '[deleted]'
+
 /** The box you type a comment or a reply into. */
 function CommentForm({
   user,
@@ -114,14 +117,22 @@ function CommentRow({
 
   return (
     <div className="comment">
-      <Link to={`/u/${comment.author.username}`} aria-label={comment.author.name}>
-        <Avatar user={comment.author} size={34} />
-      </Link>
+      {comment.author ? (
+        <Link to={`/u/${comment.author.username}`} aria-label={comment.author.name}>
+          <Avatar user={comment.author} size={34} />
+        </Link>
+      ) : (
+        <span className="avatar deleted-avatar" style={{ width: 34, height: 34 }} aria-hidden="true" />
+      )}
       <div className="comment-body">
         <p className="comment-head">
-          <Link to={`/u/${comment.author.username}`} className="comment-author">
-            {comment.author.name}
-          </Link>
+          {comment.author ? (
+            <Link to={`/u/${comment.author.username}`} className="comment-author">
+              {comment.author.name}
+            </Link>
+          ) : (
+            <span className="comment-author deleted-author">{DELETED}</span>
+          )}
           <span className="muted small">
             <time dateTime={comment.created_at}>{timeAgo(comment.created_at)}</time>
             {comment.edited && ' · edited'}
@@ -319,7 +330,7 @@ export default function Comments({ recipeId }: { recipeId: number }) {
                         comment={reply}
                         onSaved={(updated) => replaceOne(updated.id, () => updated)}
                         onDeleted={() => replaceOne(reply.id, () => null)}
-                        onReply={user ? () => startReply(thread, reply.author.username) : undefined}
+                        onReply={user ? () => startReply(thread, reply.author?.username) : undefined}
                       />
                     </li>
                   ))}
@@ -335,7 +346,7 @@ export default function Comments({ recipeId }: { recipeId: number }) {
                           setReplyDraft('')
                         }}
                         busy={posting && replyTo === thread.id}
-                        placeholder={`Reply to ${thread.author.name}`}
+                        placeholder={`Reply to ${thread.author?.name ?? DELETED}`}
                         submitLabel="Reply"
                         autoFocus
                       />

@@ -6,8 +6,16 @@ export interface AuthValue {
   /** True until the first "who am I?" call comes back. */
   loading: boolean
   signIn: (username: string, password: string) => Promise<void>
-  signUp: (data: { username: string; password: string; email?: string; display_name?: string }) => Promise<void>
+  signUp: (data: {
+    username: string
+    password: string
+    email?: string
+    display_name?: string
+    accept_terms: boolean
+  }) => Promise<void>
   signOut: () => Promise<void>
+  /** Deletes the account and everything in it, then leaves you signed out. */
+  deleteAccount: (password: string) => Promise<void>
   /** Replaces the signed-in user after a profile change. */
   setUser: (user: Me) => void
 }

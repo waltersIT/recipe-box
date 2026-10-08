@@ -44,7 +44,8 @@ export interface Me {
 
 export interface Comment {
   id: number
-  author: UserBrief
+  /** Null once the author has deleted their account; shown as "[deleted]". */
+  author: UserBrief | null
   body: string
   /** The comment this answers; null for a top-level one. Threads are one deep. */
   parent: number | null

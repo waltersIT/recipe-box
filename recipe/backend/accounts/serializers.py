@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
@@ -94,6 +95,13 @@ class RegisterSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, max_length=128, style={"input_type": "password"})
     email = serializers.EmailField(required=False, allow_blank=True)
     display_name = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    # "I'm at least 13 and agree to the Terms of Service and Privacy Policy."
+    accept_terms = serializers.BooleanField(write_only=True)
+
+    def validate_accept_terms(self, value):
+        if not value:
+            raise serializers.ValidationError("You need to agree to the Terms of Service and Privacy Policy.")
+        return value
 
     def validate_username(self, value):
         if User.objects.filter(username__iexact=value).exists():
@@ -114,9 +122,9 @@ class RegisterSerializer(serializers.Serializer):
             email=validated_data.get("email", ""),
             password=validated_data["password"],
         )
-        if display_name:
-            # The profile was created by a signal when the user was.
-            profile = user.profile
-            profile.display_name = display_name[:80]
-            profile.save(update_fields=["display_name"])
+        # The profile was created by a signal when the user was.
+        profile = user.profile
+        profile.display_name = display_name[:80]
+        profile.terms_accepted_at = timezone.now()
+        profile.save(update_fields=["display_name", "terms_accepted_at"])
         return user

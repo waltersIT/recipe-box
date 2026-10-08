@@ -129,10 +129,16 @@ class Comment(models.Model):
     Threads are one level deep: a reply hangs off a top-level comment, and
     replying to a reply joins that same thread rather than nesting further.
     Deep nesting is hard to read and harder to answer on a phone.
+
+    When an author deletes their account, their comments stay so the
+    conversation around them still makes sense, but `author` is cleared and
+    they're shown as "[deleted]", like Reddit.
     """
 
     recipe = models.ForeignKey(Recipe, on_delete=models.CASCADE, related_name="comments")
-    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="comments", null=True, blank=True
+    )
     parent = models.ForeignKey(
         "self", on_delete=models.CASCADE, related_name="replies", null=True, blank=True
     )
@@ -145,7 +151,7 @@ class Comment(models.Model):
         ordering = ["created_at", "id"]
 
     def __str__(self):
-        return f"{self.author} on {self.recipe}"
+        return f"{self.author or '[deleted]'} on {self.recipe}"
 
     @property
     def edited(self) -> bool:

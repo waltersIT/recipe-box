@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useAuth } from '../auth'
 import RecipeCard from '../components/RecipeCard'
@@ -26,6 +26,7 @@ function Grid({ recipes, onLike }: { recipes: RecipeSummary[]; onLike: (id: numb
 
 export default function HomePage() {
   const { user } = useAuth()
+  const accountDeleted = (useLocation().state as { accountDeleted?: boolean } | null)?.accountDeleted
   const [params, setParams] = useSearchParams()
   const search = params.get('q') ?? ''
   const tag = params.get('tag') ?? ''
@@ -115,6 +116,7 @@ export default function HomePage() {
 
   return (
     <div className="library">
+      {accountDeleted && <div className="alert info">Your account and everything in it have been deleted.</div>}
       <div className="library-toolbar">
         <input
           type="search"

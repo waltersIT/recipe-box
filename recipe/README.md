@@ -72,6 +72,8 @@ A typical import costs a few cents.
 - **Threads are one level deep.** Replying to a reply joins the same thread and prefills an `@name` rather than nesting further, which keeps a long conversation readable on a phone.
 - **Profiles** live at `/u/<username>` and list everything that person has uploaded, with a display name, a short bio and a photo.
 - **The landing page** shows the newest recipes from the people you follow, then what's popular across the whole box — most viewed and liked, with a like counting for ten views. A view is counted once per browser session, and looking at your own recipe doesn't count.
+- **Deleting an account** is under Edit profile → Delete account, and asks for the password again. It removes the user and everything they made for good: recipes with their photos and files, profile and photo, likes and follows. Their comments on other people's recipes stay, with the author cleared, and show as **[deleted]** like on Reddit; only the recipe's owner can remove those. Like counts on other people's recipes are corrected (`DELETE /api/users/me/` with `{"password": …}`).
+- **Terms and privacy.** `/terms` and `/privacy` hold the Terms of Service and Privacy Policy, linked from every page's footer. Signing up requires ticking "I'm at least 13 and agree…", and the time is saved as `Profile.terms_accepted_at`. Before launch, fill in the operator name, contact email, mailing address and governing state at the top of `frontend/src/pages/LegalPage.tsx`.
 - Signing in uses a Django session cookie, so writes carry a CSRF token. In development the dev server's origin (`http://localhost:5173`) is trusted automatically; in production the app and the React build share one origin.
 
 ## Using recipes

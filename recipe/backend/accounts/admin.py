@@ -5,7 +5,7 @@ from .models import Follow, Profile
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ["user", "display_name", "created_at"]
+    list_display = ["user", "display_name", "created_at", "terms_accepted_at"]
     search_fields = ["user__username", "display_name"]
 
 

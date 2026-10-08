@@ -90,6 +90,72 @@ function EditProfile({ profile, onDone }: { profile: Profile; onDone: (updated: 
   )
 }
 
+/** Permanently deletes the account. Asks for the password so a borrowed, signed-in browser can't. */
+function DeleteAccount({ profile }: { profile: Profile }) {
+  const { deleteAccount } = useAuth()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await deleteAccount(password)
+      navigate('/', { replace: true, state: { accountDeleted: true } })
+    } catch (err) {
+      setError((err as Error).message)
+      setBusy(false)
+    }
+  }
+
+  const recipes =
+    profile.recipe_count === 0 ? 'recipes' : `${profile.recipe_count} recipe${profile.recipe_count === 1 ? '' : 's'}`
+
+  return (
+    <section className="panel danger-zone">
+      <h2>Delete account</h2>
+      <p className="muted">
+        This permanently deletes @{profile.username} and everything in it: your {recipes} with their photos and
+        original files, your profile and photo, your likes and follows. Comments you left on other people's recipes
+        stay, but your name and photo are removed and they're shown as [deleted]. It can't be undone.
+      </p>
+      {open ? (
+        <form onSubmit={submit}>
+          <div className="field">
+            <label htmlFor="delete_password">Enter your password to confirm</label>
+            <input
+              id="delete_password"
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              required
+              autoFocus
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          {error && <div className="alert error">{error}</div>}
+          <div className="button-row">
+            <button type="submit" className="button danger" disabled={busy || !password}>
+              {busy ? 'Deleting…' : 'Delete my account forever'}
+            </button>
+            <button type="button" className="button" disabled={busy} onClick={() => (setOpen(false), setPassword(''), setError(''))}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button type="button" className="button danger-text" onClick={() => setOpen(true)}>
+          Delete account…
+        </button>
+      )}
+    </section>
+  )
+}
+
 export default function ProfilePage() {
   const { username } = useParams()
   const navigate = useNavigate()
@@ -184,13 +250,16 @@ export default function ProfilePage() {
       </header>
 
       {editing && profile.is_me && (
-        <EditProfile
-          profile={profile}
-          onDone={(updated) => {
-            setLoaded({ username: username!, profile: updated })
-            setEditingUser('')
-          }}
-        />
+        <>
+          <EditProfile
+            profile={profile}
+            onDone={(updated) => {
+              setLoaded({ username: username!, profile: updated })
+              setEditingUser('')
+            }}
+          />
+          <DeleteAccount profile={profile} />
+        </>
       )}
 
       <div className="section-head">

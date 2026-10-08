@@ -13,6 +13,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [acceptTerms, setAcceptTerms] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -26,7 +27,13 @@ export default function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     setBusy(true)
     setError('')
     try {
-      if (isSignUp) await signUp({ username: username.trim(), password, display_name: displayName.trim() })
+      if (isSignUp)
+        await signUp({
+          username: username.trim(),
+          password,
+          display_name: displayName.trim(),
+          accept_terms: acceptTerms,
+        })
       else await signIn(username.trim(), password)
       navigate(next, { replace: true })
     } catch (err) {
@@ -81,6 +88,24 @@ export default function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
+          {isSignUp && (
+            <div className="field">
+              <label className="checkbox terms-checkbox">
+                <input type="checkbox" checked={acceptTerms} required onChange={(e) => setAcceptTerms(e.target.checked)} />
+                <span>
+                  I'm at least 13 years old and I agree to the{' '}
+                  <Link to="/terms" target="_blank">
+                    Terms of Service
+                  </Link>{' '}
+                  and{' '}
+                  <Link to="/privacy" target="_blank">
+                    Privacy Policy
+                  </Link>
+                  . I understand I'm solely responsible for the recipes I publish.
+                </span>
+              </label>
+            </div>
+          )}
           {error && <div className="alert error">{error}</div>}
           <div className="button-row">
             <button type="submit" className="button primary" disabled={busy}>

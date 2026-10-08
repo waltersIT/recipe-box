@@ -27,6 +27,6 @@ class OwnCommentOrRecipeOwner(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
             return True
-        if obj.author_id == request.user.id:
+        if obj.author_id is not None and obj.author_id == request.user.id:
             return True
         return request.method == "DELETE" and obj.recipe.owner_id == request.user.id

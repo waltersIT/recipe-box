@@ -271,6 +271,13 @@ export default function RecipePage() {
             </>
           )}
 
+          <p className="recipe-disclaimer muted small">
+            Posted by a member, who is solely responsible for it.{' '}
+            <Link to="/terms#no-liability">Recipe Box doesn't test or verify recipes</Link>. Nutrition figures are
+            unverified estimates and nothing here has been evaluated by the FDA. Check ingredients for allergens and
+            cook to <a href="https://www.foodsafety.gov/food-safety-charts/safe-minimum-internal-temperatures" target="_blank" rel="noreferrer">safe temperatures</a>.
+          </p>
+
           {recipe.attachments.length > 0 && (
             <>
               <h2>Original files</h2>
